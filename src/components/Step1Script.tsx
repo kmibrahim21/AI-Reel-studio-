@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Scene, ComponentVisualType } from '../types';
 import { parseScriptToScenes, validateScriptCoverage } from '../utils/scriptParser';
+import { getStoredGeminiKey } from '../utils/storage';
 import { InlineGeminiKeyBox } from './InlineGeminiKeyBox';
 import { Sparkles, FileText, Upload, AlertTriangle, CheckCircle2, Plus, Trash2, ArrowRight } from 'lucide-react';
 
@@ -58,39 +59,94 @@ export const Step1Script: React.FC<Step1ScriptProps> = ({
     setIsGeneratingAi(true);
     setAiErrorWarning(null);
 
+    const activeKey = (customApiKey || getStoredGeminiKey() || '').trim();
+
+    // 1. Try server proxy endpoint
     try {
       const resp = await fetch('/api/gemini/script', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(customApiKey ? { 'x-gemini-key': customApiKey.trim() } : {})
+          ...(activeKey ? { 'x-gemini-key': activeKey } : {})
         },
         body: JSON.stringify({
           topic: aiTopic.trim(),
-          customApiKey: customApiKey?.trim() || ''
+          customApiKey: activeKey
         })
       });
 
-      const data = await resp.json();
+      const contentType = resp.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await resp.json();
 
-      if (!resp.ok || !data.ok) {
-        const warning = data.banglaReason || data.error || '⚠️ AI স্ক্রিপ্ট তৈরিতে সমস্যা হয়েছে';
-        setAiErrorWarning(warning);
-        return;
-      }
-
-      // Successful AI generation
-      if (data.script) {
-        onScriptChange(data.script);
-        handleAutoPlanScenes(data.script);
-        setAiTopic('');
-        setAiErrorWarning(null);
+        if (resp.ok && data.ok && data.script) {
+          onScriptChange(data.script);
+          handleAutoPlanScenes(data.script);
+          setAiTopic('');
+          setAiErrorWarning(null);
+          setIsGeneratingAi(false);
+          return;
+        } else if (data.banglaReason || data.error) {
+          setAiErrorWarning(data.banglaReason || data.error);
+          setIsGeneratingAi(false);
+          return;
+        }
       }
     } catch {
-      setAiErrorWarning('⚠️ নেটওয়ার্ক সমস্যা — অনুগ্রহ করে আবার চেষ্টা করুন');
-    } finally {
-      setIsGeneratingAi(false);
+      // Backend fetch failed, continue to direct client fallback
     }
+
+    // 2. Direct Google Gemini API fallback (resilient for static host / Vercel proxy issues)
+    if (activeKey) {
+      try {
+        const promptText = `টপিক: ${aiTopic.trim()}\n\nএই বিষয়ের উপর একটি ৪ থেকে ৬ দৃশ্যের আকর্ষণীয় বাংলা রিল স্ক্রিপ্ট তৈরি করো ZBot ফরম্যাটে।`;
+        const sysInstruction = `You are ReelStudio, an elite Bengali video script creator for viral social media reels.
+Structure format MUST follow EXACTLY this syntax:
+TITLE: <আকর্ষণীয় বাংলা শিরোনাম>
+
+## SCENE 1
+NARRATION: <প্রথম দৃশ্যের ভয়েসওভার বাক্য>
+IMAGE: <ভিজ্যুয়াল বর্ণনা>
+
+## SCENE 2
+NARRATION: <দ্বিতীয় দৃশ্যের ভয়েসওভার বাক্য>
+IMAGE: <ভিজ্যুয়াল বর্ণনা>
+
+## SCENE 3
+NARRATION: <পরবর্তী দৃশ্যের ভয়েসওভার বাক্য>
+IMAGE: <ভিজ্যুয়াল বর্ণনা>
+(Generate 4 to 6 concise scenes in natural Bengali).`;
+
+        const directUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(activeKey)}`;
+        const directResp = await fetch(directUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: promptText }] }],
+            systemInstruction: { parts: [{ text: sysInstruction }] },
+            generationConfig: { temperature: 0.7 }
+          })
+        });
+
+        if (directResp.ok) {
+          const directData = await directResp.json();
+          const generated = directData?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (generated) {
+            onScriptChange(generated);
+            handleAutoPlanScenes(generated);
+            setAiTopic('');
+            setAiErrorWarning(null);
+            setIsGeneratingAi(false);
+            return;
+          }
+        }
+      } catch (directErr) {
+        console.warn('Direct gemini script fallback error', directErr);
+      }
+    }
+
+    setAiErrorWarning('⚠️ স্ক্রিপ্ট তৈরিতে সমস্যা হয়েছে। অনুগ্রহ করে সেটিংসে আপনার Gemini API Key চেক বা সেভ করুন।');
+    setIsGeneratingAi(false);
   };
 
   // Handle file upload (.txt or .md)

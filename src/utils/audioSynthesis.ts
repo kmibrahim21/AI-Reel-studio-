@@ -1,4 +1,5 @@
 import { VoiceName, TTSEngine } from '../types';
+import { getStoredGeminiKey } from './storage';
 
 let audioCtxInstance: AudioContext | null = null;
 
@@ -176,18 +177,28 @@ export async function requestGeminiTTS(
   model: string;
   voiceName: string;
 }> {
+  const activeKey = (customApiKey || getStoredGeminiKey() || '').trim();
+
   const res = await fetch('/api/tts/gemini', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(customApiKey ? { 'x-gemini-key': customApiKey } : {})
+      ...(activeKey ? { 'x-gemini-key': activeKey } : {})
     },
     body: JSON.stringify({
       text,
       voiceName,
-      customApiKey
+      customApiKey: activeKey
     })
   });
+
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    const err: any = new Error('সার্ভার থেকে অবৈধ রেসপন্স এসেছে');
+    err.status = res.status;
+    err.banglaReason = 'সার্ভার সংযোগ সমস্যা';
+    throw err;
+  }
 
   const data = await res.json();
   if (!res.ok || !data.ok) {

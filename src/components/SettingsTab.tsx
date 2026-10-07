@@ -52,9 +52,30 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
 
   const [isSavedNotice, setIsSavedNotice] = useState(false);
 
-  // Initial health check
+  // Initial health check on mount
   useEffect(() => {
-    handleCheckGeminiHealth();
+    const key = (geminiKey || '').trim();
+    if (key) {
+      handleCheckGeminiHealth(key);
+    } else {
+      // Check if backend has environment key configured
+      fetch('/api/health-check', { method: 'GET' })
+        .then(async (res) => {
+          if (res.ok) {
+            const data = await res.json().catch(() => null);
+            if (data?.hasServerKey) {
+              setGeminiStatus({
+                category: 'valid',
+                label: '✓ সক্রিয় (সার্ভার কনফিগার্ড)',
+                detail: 'সার্ভার এনভায়রনমেন্টে Gemini API Key সক্রিয় ও প্রস্তুত আছে।'
+              });
+            }
+          }
+        })
+        .catch(() => {
+          // Silent catch on initial mount if running without server
+        });
+    }
   }, []);
 
   // Check health of Gemini key
@@ -63,42 +84,116 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
     setIsCheckingGemini(true);
     setGeminiStatus(null);
 
+    // If key is not entered by user, verify if server key is available
+    if (!key) {
+      try {
+        const resp = await fetch('/api/health-check', { method: 'GET' });
+        if (resp.ok) {
+          const data = await resp.json().catch(() => null);
+          if (data?.hasServerKey) {
+            setGeminiStatus({
+              category: 'valid',
+              label: '✓ সক্রিয় (সার্ভার কনফিগার্ড)',
+              detail: 'সার্ভার এনভায়রনমেন্টে Gemini API Key সক্রিয় ও প্রস্তুত আছে।'
+            });
+            setIsCheckingGemini(false);
+            return;
+          }
+        }
+      } catch {
+        // Continue to prompt
+      }
+
+      setGeminiStatus({
+        category: 'invalid',
+        label: '🔑 কোনো কী দেওয়া হয়নি',
+        detail: 'AI স্ক্রিপ্ট ও ভয়েস ব্যবহারের জন্য নিচে আপনার Gemini API Key দিয়ে Save করুন।'
+      });
+      setIsCheckingGemini(false);
+      return;
+    }
+
+    // 1. Try server health-check proxy
     try {
       const resp = await fetch('/api/health-check', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(key ? { 'x-gemini-key': key } : {})
+          'x-gemini-key': key
         },
         body: JSON.stringify({ customApiKey: key })
       });
 
-      const data = await resp.json();
+      const contentType = resp.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await resp.json();
 
-      if (resp.ok && data.ok) {
+        if (resp.ok && data.ok) {
+          setGeminiStatus({
+            category: 'valid',
+            label: '✓ সক্রিয় ও প্রস্তুত',
+            detail: 'Gemini API Key সফলভাবে কাজ করছে!'
+          });
+          setIsCheckingGemini(false);
+          return;
+        } else if (data.statusCategory === 'quota_exceeded' || data.code === 429) {
+          setGeminiStatus({
+            category: 'quota',
+            label: '⚠️ কোটা শেষ — কিছুক্ষণ পর চেষ্টা করো',
+            detail: 'Google AI Studio কোটার সীমা শেষ হয়েছে। অনুগ্রহ করে কিছুক্ষণ পর চেষ্টা করুন।'
+          });
+          setIsCheckingGemini(false);
+          return;
+        } else if (data.banglaReason) {
+          setGeminiStatus({
+            category: 'invalid',
+            label: data.banglaReason || '❌ অবৈধ key',
+            detail: data.detailedHelp || 'Gemini API Key পরীক্ষা করুন।'
+          });
+          setIsCheckingGemini(false);
+          return;
+        }
+      }
+    } catch {
+      // Server proxy fetch failed, fall through to direct Google API verification below
+    }
+
+    // 2. Direct Google Generative Language API verification (resilient fallback for static hosting / Vercel cold-starts)
+    try {
+      const testUrl = `https://generativelanguage.googleapis.com/v1beta/models?pageSize=1&key=${encodeURIComponent(key)}`;
+      const directResp = await fetch(testUrl, { method: 'GET' });
+
+      if (directResp.ok) {
         setGeminiStatus({
           category: 'valid',
           label: '✓ সক্রিয় ও প্রস্তুত',
-          detail: 'Gemini API Key সফলভাবে কাজ করছে!'
+          detail: 'Google Gemini API কী সফলভাবে সরাসরি যাচাই হয়েছে ও প্রস্তুত!'
         });
-      } else if (data.statusCategory === 'quota_exceeded' || data.code === 429) {
+      } else if (directResp.status === 429) {
         setGeminiStatus({
           category: 'quota',
           label: '⚠️ কোটা শেষ — কিছুক্ষণ পর চেষ্টা করো',
-          detail: 'Google AI Studio কোটার সীমা শেষ হয়েছে। অনুগ্রহ করে কিছুক্ষণ পর চেষ্টা করুন।'
+          detail: 'Google AI Studio কোটার সীমা শেষ হয়েছে। কিছুক্ষণ পর চেষ্টা করুন।'
+        });
+      } else if (directResp.status === 400 || directResp.status === 403) {
+        const errJson = await directResp.json().catch(() => null);
+        setGeminiStatus({
+          category: 'invalid',
+          label: '❌ অবৈধ key',
+          detail: errJson?.error?.message || 'Gemini API Key সঠিক নয়। অনুগ্রহ করে নতুন কী পরীক্ষা করুন।'
         });
       } else {
         setGeminiStatus({
           category: 'invalid',
-          label: data.banglaReason || '❌ অবৈধ key',
-          detail: data.detailedHelp || 'Gemini API Key পরীক্ষা করুন।'
+          label: '❌ যাচাই ব্যর্থ',
+          detail: `সার্ভার রেসপন্স কোড: ${directResp.status}। অনুগ্রহ করে কি সঠিক আছে কিনা দেখুন।`
         });
       }
     } catch {
       setGeminiStatus({
         category: 'error',
-        label: '⚠️ নেটওয়ার্ক সমস্যা — আবার চেষ্টা করো',
-        detail: 'সার্ভার সংযোগে সমস্যা দেখা দিয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।'
+        label: '⚠️ ইন্টারনেট সংযোগ চেক করুন',
+        detail: 'গুগল সার্ভারের সাথে সংযোগ করা যাচ্ছে না। অনুগ্রহ করে ইন্টারনেট সংযোগ চেক করুন।'
       });
     } finally {
       setIsCheckingGemini(false);

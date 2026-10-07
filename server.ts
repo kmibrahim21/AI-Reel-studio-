@@ -12,11 +12,23 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
+// CORS & Preflight handling
+app.use((_req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-gemini-key');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+  if (_req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Helper to get active Gemini API key (from header, request body, or server env)
 function getGeminiKey(req: Request): string {
-  const customKey = (req.headers['x-gemini-key'] as string) || req.body?.customApiKey || req.query?.key as string;
+  const customKey = (req.headers['x-gemini-key'] as string) || req.body?.customApiKey || (req.query?.key as string);
   return (customKey && customKey.trim().length > 0) ? customKey.trim() : (process.env.GEMINI_API_KEY || '').trim();
 }
 
@@ -31,8 +43,15 @@ function getGenAIClient(apiKey: string): GoogleGenAI {
   });
 }
 
+const apiRouter = express.Router();
+
+// Root ping
+apiRouter.all('/', (_req: Request, res: Response) => {
+  return res.json({ ok: true, name: 'ReelStudio API' });
+});
+
 // Health check endpoint for Gemini API key (GET)
-app.get('/api/health-check', (_req: Request, res: Response) => {
+apiRouter.get('/health-check', (_req: Request, res: Response) => {
   const hasKey = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 0);
   return res.json({
     ok: hasKey,
@@ -44,7 +63,7 @@ app.get('/api/health-check', (_req: Request, res: Response) => {
 });
 
 // Health check endpoint for Gemini API key (POST)
-app.post('/api/health-check', async (req: Request, res: Response) => {
+apiRouter.post('/health-check', async (req: Request, res: Response) => {
   const apiKey = getGeminiKey(req);
   if (!apiKey) {
     return res.status(400).json({
@@ -107,7 +126,7 @@ app.post('/api/health-check', async (req: Request, res: Response) => {
 });
 
 // AI Script Generation endpoint
-app.post('/api/gemini/script', async (req: Request, res: Response) => {
+apiRouter.post('/gemini/script', async (req: Request, res: Response) => {
   const apiKey = getGeminiKey(req);
   const { topic } = req.body;
 
@@ -154,8 +173,8 @@ IMAGE: <ভিজ্যুয়াল বর্ণনা>
   const prompt = `টপিক: ${topic.trim()}\n\nএই বিষয়ের উপর একটি ৪ থেকে ৬ দৃশ্যের আকর্ষণীয় বাংলা রিল স্ক্রিপ্ট তৈরি করো।`;
 
   const modelsToTry = [
-    'gemini-3.5-flash-lite',
     'gemini-3.8-flash',
+    'gemini-2.5-flash',
     'gemini-3.1-flash-lite'
   ];
 
@@ -246,9 +265,8 @@ function convertPcmToWav(base64Data: string, sampleRate = 24000): string {
   }
 }
 
-// Gemini TTS Endpoint
-// Priority order: gemini-2.5-flash-preview-tts -> gemini-2.5-pro-preview-tts -> gemini-2.5-flash
-app.post('/api/tts/gemini', async (req: Request, res: Response) => {
+// Gemini TTS Endpoint (Supports both /tts/gemini and /gemini/tts)
+const handleGeminiTts = async (req: Request, res: Response) => {
   const apiKey = getGeminiKey(req);
   const { text, voiceName = 'Kore' } = req.body;
 
@@ -352,10 +370,13 @@ app.post('/api/tts/gemini', async (req: Request, res: Response) => {
     banglaReason,
     error: lastErrMsg || 'All TTS models failed'
   });
-});
+};
+
+apiRouter.post('/tts/gemini', handleGeminiTts);
+apiRouter.post('/gemini/tts', handleGeminiTts);
 
 // ElevenLabs TTS Proxy
-app.post('/api/tts/elevenlabs', async (req: Request, res: Response) => {
+const handleElevenLabsTts = async (req: Request, res: Response) => {
   const { text, apiKey, voiceId = '21m00Tcm4TlvDq8ikWAM' } = req.body;
   if (!apiKey) {
     return res.status(401).json({
@@ -413,7 +434,14 @@ app.post('/api/tts/elevenlabs', async (req: Request, res: Response) => {
       error: err.message
     });
   }
-});
+};
+
+apiRouter.post('/tts/elevenlabs', handleElevenLabsTts);
+apiRouter.post('/elevenlabs/tts', handleElevenLabsTts);
+
+// Mount router under /api and root /
+app.use('/api', apiRouter);
+app.use('/', apiRouter);
 
 // Setup Vite in development or serve static in production
 async function startServer() {
