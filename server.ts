@@ -28,7 +28,12 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Helper to get active Gemini API key (from header, request body, or server env)
 function getGeminiKey(req: Request): string {
-  const customKey = (req.headers['x-gemini-key'] as string) || req.body?.customApiKey || (req.query?.key as string);
+  const headerKey = (req.headers['x-goog-api-key'] as string) || 
+                    (req.headers['x-gemini-key'] as string) || 
+                    (req.headers['authorization'] ? (req.headers['authorization'] as string).replace(/^Bearer\s+/i, '') : '');
+  const bodyKey = req.body?.customApiKey || req.body?.apiKey;
+  const queryKey = req.query?.key as string;
+  const customKey = headerKey || bodyKey || queryKey;
   return (customKey && customKey.trim().length > 0) ? customKey.trim() : (process.env.GEMINI_API_KEY || '').trim();
 }
 
@@ -38,6 +43,7 @@ function getGenAIClient(apiKey: string): GoogleGenAI {
     httpOptions: {
       headers: {
         'User-Agent': 'aistudio-build',
+        'x-goog-api-key': apiKey
       },
     },
   });
@@ -101,7 +107,7 @@ apiRouter.post('/health-check', async (req: Request, res: Response) => {
         code: status,
         statusCategory,
         banglaReason,
-        detailedHelp: errBody?.error?.message || '⚠️ এই key-টি কাজ করছে না। aistudio.google.com থেকে নতুন key নিয়ে চেষ্টা করুন।',
+        detailedHelp: '⚠️ এই key-টি কাজ করছে না। aistudio.google.com → Get API key → Create API key থেকে নতুন key নিয়ে আবার চেষ্টা করো।',
         error: errBody?.error?.message || `HTTP ${status}`
       });
     }
@@ -119,7 +125,7 @@ apiRouter.post('/health-check', async (req: Request, res: Response) => {
       code: 500,
       statusCategory: 'error',
       banglaReason: '⚠️ নেটওয়ার্ক সমস্যা — আবার চেষ্টা করো',
-      detailedHelp: err.message,
+      detailedHelp: 'গুগল সার্ভারের সাথে সংযোগ করা যাচ্ছে না। অনুগ্রহ করে ইন্টারনেট সংযোগ চেক করুন।',
       error: err.message
     });
   }
@@ -186,10 +192,9 @@ IMAGE: <ভিজ্যুয়াল বর্ণনা>
   const prompt = `টপিক: ${topic.trim()}\n\nএই বিষয়ের উপর একটি ৪ থেকে ৬ দৃশ্যের আকর্ষণীয় বাংলা রিল স্ক্রিপ্ট তৈরি করো।`;
 
   const modelsToTry = [
+    'gemini-2.5-flash',
+    'gemini-2.5-pro',
     'gemini-3.1-flash-lite',
-    'gemini-3.8-flash',
-    'gemini-3.7-flash',
-    'gemini-3.5-flash',
     'gemini-flash-latest'
   ];
 

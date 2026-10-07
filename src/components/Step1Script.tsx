@@ -67,7 +67,10 @@ export const Step1Script: React.FC<Step1ScriptProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(activeKey ? { 'x-gemini-key': activeKey } : {})
+          ...(activeKey ? {
+            'x-gemini-key': activeKey,
+            'x-goog-api-key': activeKey,
+          } : {})
         },
         body: JSON.stringify({
           topic: aiTopic.trim(),
@@ -117,10 +120,13 @@ NARRATION: <পরবর্তী দৃশ্যের ভয়েসওভা
 IMAGE: <ভিজ্যুয়াল বর্ণনা>
 (Generate 4 to 6 concise scenes in natural Bengali).`;
 
-        const directUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${encodeURIComponent(activeKey)}`;
+        const directUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(activeKey)}`;
         const directResp = await fetch(directUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': activeKey
+          },
           body: JSON.stringify({
             contents: [{ parts: [{ text: promptText }] }],
             systemInstruction: { parts: [{ text: sysInstruction }] },

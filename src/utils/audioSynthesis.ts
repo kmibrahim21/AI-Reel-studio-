@@ -290,7 +290,10 @@ export async function requestGeminiTTS(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(activeKey ? { 'x-gemini-key': activeKey } : {})
+      ...(activeKey ? {
+        'x-gemini-key': activeKey,
+        'x-goog-api-key': activeKey,
+      } : {})
     },
     body: JSON.stringify({
       text,

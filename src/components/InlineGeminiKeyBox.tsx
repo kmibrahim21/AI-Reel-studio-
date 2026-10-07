@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Key, Eye, EyeOff, Save, CheckCircle2, AlertTriangle, XCircle, RefreshCw } from 'lucide-react';
-import { setStoredGeminiKey } from '../utils/storage';
+import { setStoredGeminiKey, isValidGeminiKeyFormat, validateGeminiApiKey } from '../utils/storage';
 
 interface InlineGeminiKeyBoxProps {
   currentKey?: string;
@@ -50,36 +50,34 @@ export const InlineGeminiKeyBox: React.FC<InlineGeminiKeyBoxProps> = ({
 
   const handleCheckHealth = async (keyToCheck: string) => {
     const trimmedKey = (keyToCheck || '').trim();
+    if (!trimmedKey) {
+      setCheckStatus({
+        type: 'invalid',
+        text: '🔑 কোনো কী দেওয়া হয়নি',
+        detail: 'AI স্ক্রিপ্ট ও ভয়েস ব্যবহারের জন্য নিচে আপনার Gemini API Key দিয়ে Save করুন।'
+      });
+      return;
+    }
+
     setIsChecking(true);
     setCheckStatus(null);
 
-    try {
-      const resp = await fetch('/api/health-check', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(trimmedKey ? { 'x-gemini-key': trimmedKey } : {})
-        },
-        body: JSON.stringify({ customApiKey: trimmedKey })
+    // Format check warning if not starting with AIza or AQ.
+    if (!isValidGeminiKeyFormat(trimmedKey)) {
+      setCheckStatus({
+        type: 'invalid',
+        text: '⚠️ ফরম্যাট সতর্কবার্তা',
+        detail: 'Gemini API Key সাধারণত AIzaSy... অথবা AQ. দিয়ে শুরু হয়। অনুগ্রহ করে সঠিক কী পেস্ট করেছেন কিনা যাচাই করুন।'
       });
-      const data = await resp.json();
+    }
 
-      if (resp.ok && data.ok) {
-        setCheckStatus({ type: 'valid', text: '✓ যুক্ত (সক্রিয় ও কার্যকরী)' });
-      } else if (data.statusCategory === 'quota_exceeded' || data.code === 429) {
-        setCheckStatus({
-          type: 'quota',
-          text: '⚠️ কোটা শেষ — কিছুক্ষণ পর চেষ্টা করো',
-          detail: 'আপনার Google AI Studio কোটার সীমা শেষ হয়েছে। অনুগ্রহ করে কিছুক্ষণ পর চেষ্টা করুন।'
-        });
-      } else {
-        const errorMsg = data.detailedHelp || '⚠️ এই key-টি কাজ করছে না। aistudio.google.com থেকে নতুন key নিয়ে চেষ্টা করুন।';
-        setCheckStatus({
-          type: 'invalid',
-          text: '❌ অবৈধ key',
-          detail: errorMsg
-        });
-      }
+    try {
+      const res = await validateGeminiApiKey(trimmedKey);
+      setCheckStatus({
+        type: res.statusCategory === 'valid' ? 'valid' : res.statusCategory === 'quota' ? 'quota' : 'invalid',
+        text: res.label,
+        detail: res.detail
+      });
     } catch {
       setCheckStatus({
         type: 'error',
@@ -150,7 +148,7 @@ export const InlineGeminiKeyBox: React.FC<InlineGeminiKeyBoxProps> = ({
               setCheckStatus(null);
             }}
             onKeyDown={(e) => e.key === 'Enter' && handleSave()}
-            placeholder="AIzaSy... (Gemini API Key)"
+            placeholder="AIzaSy... অথবা AQ... (Gemini API Key)"
             className="w-full pl-3.5 pr-9 py-2 bg-[#0B0B12] rounded-xl border border-[#8B5CF6]/40 text-xs text-white placeholder-[#A7A3C2]/50 focus:outline-none focus:border-[#8B5CF6] font-mono"
           />
           <button

@@ -18,6 +18,120 @@ export function getStoredGeminiKey(): string {
   }
 }
 
+export function isValidGeminiKeyFormat(key: string): boolean {
+  const trimmed = (key || '').trim();
+  if (!trimmed) return false;
+  // Accepts legacy Google key (starts with AIza...) and new AI Studio format (starts with AQ...)
+  return trimmed.startsWith('AIza') || trimmed.startsWith('AQ.');
+}
+
+export async function validateGeminiApiKey(key: string): Promise<{
+  ok: boolean;
+  statusCategory: 'valid' | 'invalid' | 'quota' | 'error';
+  label: string;
+  detail: string;
+}> {
+  const trimmed = (key || '').trim();
+  if (!trimmed) {
+    return {
+      ok: false,
+      statusCategory: 'invalid',
+      label: '🔑 কোনো কী দেওয়া হয়নি',
+      detail: 'AI স্ক্রিপ্ট ও ভয়েস ব্যবহারের জন্য নিচে আপনার Gemini API Key দিয়ে Save করুন।'
+    };
+  }
+
+  // 1. Try server health-check proxy
+  try {
+    const resp = await fetch('/api/health-check', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-gemini-key': trimmed,
+        'x-goog-api-key': trimmed
+      },
+      body: JSON.stringify({ customApiKey: trimmed })
+    });
+
+    const contentType = resp.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const data = await resp.json();
+      if (resp.ok && data.ok) {
+        return {
+          ok: true,
+          statusCategory: 'valid',
+          label: '✓ যুক্ত',
+          detail: 'Gemini API Key সফলভাবে কাজ করছে!'
+        };
+      } else if (data.statusCategory === 'quota_exceeded' || resp.status === 429) {
+        return {
+          ok: false,
+          statusCategory: 'quota',
+          label: '⚠️ কোটা শেষ — কিছুক্ষণ পর চেষ্টা করো',
+          detail: 'Google AI Studio কোটার সীমা শেষ হয়েছে। অনুগ্রহ করে কিছুক্ষণ পর চেষ্টা করুন।'
+        };
+      } else if (resp.status === 400 || resp.status === 403 || data.statusCategory === 'invalid_key') {
+        return {
+          ok: false,
+          statusCategory: 'invalid',
+          label: '❌ অবৈধ key',
+          detail: '⚠️ এই key-টি কাজ করছে না। aistudio.google.com → Get API key → Create API key থেকে নতুন key নিয়ে আবার চেষ্টা করো।'
+        };
+      }
+    }
+  } catch {
+    // Server proxy failed, try direct Google API call below
+  }
+
+  // 2. Direct Google Generative Language API call
+  try {
+    const testUrl = `https://generativelanguage.googleapis.com/v1beta/models?pageSize=1&key=${encodeURIComponent(trimmed)}`;
+    const directResp = await fetch(testUrl, {
+      method: 'GET',
+      headers: {
+        'x-goog-api-key': trimmed
+      }
+    });
+
+    if (directResp.ok) {
+      return {
+        ok: true,
+        statusCategory: 'valid',
+        label: '✓ যুক্ত',
+        detail: 'Gemini API Key সফলভাবে যাচাই হয়েছে ও প্রস্তুত!'
+      };
+    } else if (directResp.status === 429) {
+      return {
+        ok: false,
+        statusCategory: 'quota',
+        label: '⚠️ কোটা শেষ — কিছুক্ষণ পর চেষ্টা করো',
+        detail: 'Google AI Studio কোটার সীমা শেষ হয়েছে। কিছুক্ষণ পর চেষ্টা করুন।'
+      };
+    } else if (directResp.status === 400 || directResp.status === 403) {
+      return {
+        ok: false,
+        statusCategory: 'invalid',
+        label: '❌ অবৈধ key',
+        detail: '⚠️ এই key-টি কাজ করছে না। aistudio.google.com → Get API key → Create API key থেকে নতুন key নিয়ে আবার চেষ্টা করো।'
+      };
+    } else {
+      return {
+        ok: false,
+        statusCategory: 'invalid',
+        label: '❌ অবৈধ key',
+        detail: '⚠️ এই key-টি কাজ করছে না। aistudio.google.com → Get API key → Create API key থেকে নতুন key নিয়ে আবার চেষ্টা করো।'
+      };
+    }
+  } catch {
+    return {
+      ok: false,
+      statusCategory: 'error',
+      label: '⚠️ নেটওয়ার্ক সমস্যা — আবার চেষ্টা করো',
+      detail: 'গুগল সার্ভারের সাথে সংযোগ করা যাচ্ছে না। অনুগ্রহ করে ইন্টারনেট সংযোগ চেক করুন।'
+    };
+  }
+}
+
 export function setStoredGeminiKey(key: string): void {
   try {
     const trimmed = (key || '').trim();
