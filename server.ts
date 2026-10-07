@@ -52,17 +52,40 @@ app.post('/api/health-check', async (req: Request, res: Response) => {
       code: 400,
       statusCategory: 'invalid_key',
       banglaReason: '❌ কোনো API কী দেওয়া হয়নি',
-      detailedHelp: '⚠️ কোনো Gemini API key পাওয়া যায়নি।',
+      detailedHelp: '⚠️ কোনো Gemini API key পাওয়া যায়নি। সেটিংসে আপনার API কী দিয়ে Save করুন।',
       message: 'No API key provided or found in environment'
     });
   }
 
   try {
-    const ai = getGenAIClient(apiKey);
-    await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: 'hi',
+    const testUrl = `https://generativelanguage.googleapis.com/v1beta/models?pageSize=1&key=${encodeURIComponent(apiKey)}`;
+    const resp = await fetch(testUrl, {
+      method: 'GET',
+      headers: {
+        'x-goog-api-key': apiKey,
+      }
     });
+
+    if (!resp.ok) {
+      const errBody = await resp.json().catch(() => ({}));
+      const status = resp.status;
+      let statusCategory = 'invalid_key';
+      let banglaReason = '❌ অবৈধ key';
+
+      if (status === 429) {
+        statusCategory = 'quota_exceeded';
+        banglaReason = '⚠️ কোটা শেষ — কিছুক্ষণ পর চেষ্টা করো';
+      }
+
+      return res.status(status).json({
+        ok: false,
+        code: status,
+        statusCategory,
+        banglaReason,
+        detailedHelp: errBody?.error?.message || '⚠️ এই key-টি কাজ করছে না। aistudio.google.com থেকে নতুন key নিয়ে চেষ্টা করুন।',
+        error: errBody?.error?.message || `HTTP ${status}`
+      });
+    }
 
     return res.json({
       ok: true,
@@ -72,15 +95,13 @@ app.post('/api/health-check', async (req: Request, res: Response) => {
       message: '✓ যুক্ত (সক্রিয় ও কার্যকরী)'
     });
   } catch (err: any) {
-    const status = err.status || 500;
-    const isQuota = status === 429 || (err.message && err.message.includes('429'));
-    return res.status(status >= 400 && status < 600 ? status : 500).json({
+    return res.status(500).json({
       ok: false,
-      code: status,
-      statusCategory: isQuota ? 'quota_exceeded' : 'invalid_key',
-      banglaReason: isQuota ? '⚠️ কোটা শেষ — কিছুক্ষণ পর চেষ্টা করো' : '❌ অবৈধ key',
-      detailedHelp: isQuota ? '⚠️ কোটা শেষ — কিছুক্ষণ পর চেষ্টা করো' : '⚠️ এই key-টি কাজ করছে না।',
-      error: err.message || `Error ${status}`
+      code: 500,
+      statusCategory: 'error',
+      banglaReason: '⚠️ নেটওয়ার্ক সমস্যা — আবার চেষ্টা করো',
+      detailedHelp: err.message,
+      error: err.message
     });
   }
 });
@@ -132,18 +153,36 @@ IMAGE: <ভিজ্যুয়াল বর্ণনা>
 
   const prompt = `টপিক: ${topic.trim()}\n\nএই বিষয়ের উপর একটি ৪ থেকে ৬ দৃশ্যের আকর্ষণীয় বাংলা রিল স্ক্রিপ্ট তৈরি করো।`;
 
+  const modelsToTry = [
+    'gemini-3.5-flash-lite',
+    'gemini-3.8-flash',
+    'gemini-3.1-flash-lite'
+  ];
+
   try {
     const ai = getGenAIClient(apiKey);
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: prompt,
-      config: {
-        systemInstruction,
-        temperature: 0.7,
-      }
-    });
+    let generatedText = '';
+    let lastErr: any = null;
 
-    const generatedText = response.text;
+    for (const model of modelsToTry) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            systemInstruction,
+            temperature: 0.7,
+          }
+        });
+        if (response.text) {
+          generatedText = response.text;
+          break;
+        }
+      } catch (err: any) {
+        lastErr = err;
+      }
+    }
+
     if (generatedText) {
       return res.json({
         ok: true,
@@ -151,7 +190,7 @@ IMAGE: <ভিজ্যুয়াল বর্ণনা>
       });
     }
 
-    throw new Error('No script generated');
+    throw lastErr || new Error('No script generated');
   } catch (err: any) {
     const status = err.status || 500;
     let banglaReason = '⚠️ AI স্ক্রিপ্ট তৈরিতে সমস্যা হয়েছে';
