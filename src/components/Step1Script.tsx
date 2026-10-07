@@ -117,7 +117,7 @@ NARRATION: <পরবর্তী দৃশ্যের ভয়েসওভা
 IMAGE: <ভিজ্যুয়াল বর্ণনা>
 (Generate 4 to 6 concise scenes in natural Bengali).`;
 
-        const directUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(activeKey)}`;
+        const directUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${encodeURIComponent(activeKey)}`;
         const directResp = await fetch(directUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

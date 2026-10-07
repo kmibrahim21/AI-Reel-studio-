@@ -437,10 +437,9 @@ export const Step5Voice: React.FC<Step5VoiceProps> = ({
               className="w-full bg-[#0B0B12] text-xs text-white p-2.5 rounded-xl border border-[#8B5CF6]/30 focus:outline-none focus:border-[#8B5CF6]"
             >
               <option value="none">None (শুধু narration — কোনো ব্যাকগ্রাউন্ড সাউন্ড নেই)</option>
-              <option value="lofi">🎧 Lo-Fi Chill (কোমল ও স্বস্তিদায়ক)</option>
-              <option value="corporate">💼 Corporate Ambient (আধুনিক ও প্রফেশনাল)</option>
-              <option value="dramatic">🎬 Dramatic Cinematic (গভীর সিনেমাটিক আবহ)</option>
-              <option value="upbeat">⚡ Upbeat Vlog (প্রাণবন্ত ও ইতিবাচক)</option>
+              <option value="corporate">💼 Calm Corporate (আধুনিক, শান্ত ও প্রফেশনাল)</option>
+              <option value="upbeat">⚡ Upbeat (প্রাণবন্ত, চঞ্চল ও বাণিজ্যিক)</option>
+              <option value="piano">🎹 Soft Piano (কোমল ও স্বস্তিদায়ক মেলোডি)</option>
             </select>
           </div>
 
@@ -459,7 +458,7 @@ export const Step5Voice: React.FC<Step5VoiceProps> = ({
               className="w-full accent-[#8B5CF6] cursor-pointer"
             />
             <span className="text-[10px] text-[#A7A3C2] block mt-1">
-              স্বয়ংক্রিয় অডিও ডাকিং সক্রিয় — কথা চলার সময় ব্যাকগ্রাউন্ড মিউজিক কমে যাবে।
+              স্বয়ংক্রিয় অডিও ডাকিং সক্রিয় (-12dB) — কথা চলার সময় মিউজিক কমে যাবে।
             </span>
           </div>
         </div>
@@ -471,7 +470,7 @@ export const Step5Voice: React.FC<Step5VoiceProps> = ({
           <div>
             <h4 className="text-sm font-semibold text-[#F4F2FF]">প্রতিটি দৃশ্যের ভয়েসওভার স্ট্যাটাস</h4>
             <p className="text-xs text-[#A7A3C2]">
-              মডেলের অগ্রাধিকার: gemini-2.5-flash-preview-tts → gemini-2.5-pro-preview-tts → gemini-2.5-flash
+              মডেল অগ্রাধিকার: gemini-2.5-flash-preview-tts → gemini-2.5-pro-preview-tts → gemini-2.5-flash
             </p>
           </div>
 
@@ -491,22 +490,22 @@ export const Step5Voice: React.FC<Step5VoiceProps> = ({
             ? 'bg-[#22C55E]/15 text-[#22C55E] border-[#22C55E]/30'
             : failedVoiceCount > 0
             ? 'bg-[#EF4444]/15 text-[#EF4444] border-[#EF4444]/30'
-            : 'bg-[#8B5CF6]/15 text-[#DDD6FE] border-[#8B5CF6]/30'
+            : 'bg-[#F59E0B]/15 text-[#F59E0B] border-[#F59E0B]/30'
         }`}>
           {readyVoiceCount === scenes.length && scenes.length > 0 ? (
             <>
               <CheckCircle2 className="w-4 h-4 shrink-0" />
-              <span>🎙️ {readyVoiceCount}/{scenes.length} scene-এ AI ভয়েস প্রস্তুত</span>
+              <span>🎙️ সকল ({scenes.length}) দৃশ্যে AI ভয়েস প্রস্তুত</span>
             </>
           ) : failedVoiceCount > 0 ? (
             <>
               <XCircle className="w-4 h-4 shrink-0" />
-              <span>❌ {failedVoiceCount}টি দৃশ্যে ভয়েস ব্যর্থ — নিচে "আবার চেষ্টা" করুন ({readyVoiceCount}/{scenes.length} প্রস্তুত)</span>
+              <span>❌ {failedVoiceCount}টি দৃশ্যে ভয়েস ব্যর্থ — নিচে "🔁 আবার চেষ্টা" বাটনে ক্লিক করুন ({readyVoiceCount}/{scenes.length} প্রস্তুত)</span>
             </>
           ) : (
             <>
-              <Sparkles className="w-4 h-4 shrink-0" />
-              <span>🎙️ {readyVoiceCount}/{scenes.length} দৃশ্য প্রস্তুত — "সব দৃশ্যের ভয়েস তৈরি করো" বাটনে ক্লিক করুন</span>
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>⚠️ {scenes.length - readyVoiceCount}-টি scene-এ ভয়েস নেই — export করলে voiceover থাকবে না</span>
             </>
           )}
         </div>
@@ -534,10 +533,15 @@ export const Step5Voice: React.FC<Step5VoiceProps> = ({
                 {/* Status Badges & Controls */}
                 <div className="flex items-center gap-2 shrink-0">
                   {/* Status Badge */}
-                  {isReady ? (
+                  {isGenerating ? (
+                    <span className="px-2.5 py-1 rounded-full bg-[#8B5CF6]/20 border border-[#8B5CF6]/40 text-[#DDD6FE] text-[11px] font-medium flex items-center gap-1.5">
+                      <RefreshCw className="w-3 h-3 animate-spin text-[#8B5CF6]" />
+                      <span>⏳ বানানো হচ্ছে...</span>
+                    </span>
+                  ) : isReady ? (
                     <span className="px-2.5 py-1 rounded-full bg-[#22C55E]/15 border border-[#22C55E]/30 text-[#22C55E] text-[11px] font-medium flex items-center gap-1">
                       <CheckCircle2 className="w-3 h-3" />
-                      <span>✓ AI ভয়েস প্রস্তুত ({scene.voiceModelName || 'gemini'})</span>
+                      <span>🎙️ AI ভয়েস ({scene.voiceModelName || 'gemini'})</span>
                     </span>
                   ) : isFailed ? (
                     <span className="px-2.5 py-1 rounded-full bg-[#EF4444]/15 border border-[#EF4444]/30 text-[#EF4444] text-[11px] font-medium flex items-center gap-1">
@@ -551,20 +555,22 @@ export const Step5Voice: React.FC<Step5VoiceProps> = ({
                   )}
 
                   {/* Play audio preview */}
-                  <button
-                    onClick={() => playSceneAudio(scene)}
-                    className="p-1.5 rounded-lg bg-[#14141D] hover:bg-[#8B5CF6]/20 text-[#DDD6FE] border border-[#8B5CF6]/30 text-xs transition-colors"
-                    title="ভয়েসওভার শুনুন"
-                  >
-                    <Play className="w-3.5 h-3.5" />
-                  </button>
+                  {isReady && (
+                    <button
+                      onClick={() => playSceneAudio(scene)}
+                      className="p-1.5 rounded-lg bg-[#14141D] hover:bg-[#8B5CF6]/20 text-[#DDD6FE] border border-[#8B5CF6]/30 text-xs transition-colors"
+                      title="ভয়েসওভার শুনুন"
+                    >
+                      <Play className="w-3.5 h-3.5" />
+                    </button>
+                  )}
 
                   {/* Generate / Retry button */}
                   {isFailed ? (
                     <button
                       onClick={() => generateVoiceForScene(idx)}
                       disabled={isGenerating}
-                      className="px-2.5 py-1 rounded-lg bg-[#EF4444]/20 hover:bg-[#EF4444]/35 text-[#EF4444] border border-[#EF4444]/40 text-[11px] font-semibold transition-colors flex items-center gap-1 disabled:opacity-50"
+                      className="px-2.5 py-1 rounded-lg bg-[#EF4444]/20 hover:bg-[#EF4444]/35 text-[#EF4444] border border-[#EF4444]/40 text-[11px] font-semibold transition-colors flex items-center gap-1 disabled:opacity-50 active:scale-95"
                     >
                       <RefreshCw className={`w-3 h-3 ${isGenerating ? 'animate-spin' : ''}`} />
                       <span>🔁 আবার চেষ্টা</span>
@@ -573,7 +579,7 @@ export const Step5Voice: React.FC<Step5VoiceProps> = ({
                     <button
                       onClick={() => generateVoiceForScene(idx)}
                       disabled={isGenerating}
-                      className="px-2.5 py-1 rounded-lg bg-[#8B5CF6]/15 hover:bg-[#8B5CF6]/30 text-[#DDD6FE] border border-[#8B5CF6]/30 text-[11px] font-medium transition-colors disabled:opacity-50"
+                      className="px-2.5 py-1 rounded-lg bg-[#8B5CF6]/15 hover:bg-[#8B5CF6]/30 text-[#DDD6FE] border border-[#8B5CF6]/30 text-[11px] font-medium transition-colors disabled:opacity-50 active:scale-95"
                     >
                       {isGenerating ? '...' : (scene.voiceStatus === 'pending' ? 'ভয়েস তৈরি' : 'রি-জেনারেট')}
                     </button>

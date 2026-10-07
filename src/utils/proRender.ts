@@ -304,11 +304,28 @@ export function generateStandaloneScenesHtml(
             ctx.fillText(descLines[i], x + w / 2, y + h * 0.7 + (i * 32));
           }
         } else if (comp === 'feature_list') {
-          const items = [
-            '১. মূল লক্ষ্যের উপর অবিচল মনোযোগ',
-            '২. ক্লায়েন্টের চাহিদা অনুযায়ী সেরা সেবা',
-            '৩. বাস্তব অভিজ্ঞতা ও নিয়মিত চর্চা'
-          ];
+          const sourceText = scene.voiceover_text || scene.caption || '';
+          const rawParts = sourceText
+            .split(/[,।;\n]+/)
+            .map(function(s) { return s.trim(); })
+            .filter(function(s) { return s.length > 2; });
+
+          let items = [];
+          if (rawParts.length >= 2) {
+            items = rawParts.slice(0, 3).map(function(p, i) { return (i + 1) + '. ' + p; });
+          } else {
+            const words = sourceText.split(/\s+/).filter(Boolean);
+            if (words.length >= 6) {
+              const partSize = Math.ceil(words.length / 3);
+              const p1 = words.slice(0, partSize).join(' ');
+              const p2 = words.slice(partSize, partSize * 2).join(' ');
+              const p3 = words.slice(partSize * 2).join(' ');
+              items = [p1, p2, p3].filter(Boolean).map(function(p, i) { return (i + 1) + '. ' + p; });
+            } else {
+              items = ['১. ' + sourceText];
+            }
+          }
+
           const startY = y + h * 0.25;
           const stepY = h * 0.24;
           items.forEach(function(item, idx) {
@@ -325,7 +342,8 @@ export function generateStandaloneScenesHtml(
             ctx.textAlign = 'left';
             ctx.fillStyle = IS_DARK ? '#F4F2FF' : '#1F2937';
             ctx.font = '600 ' + Math.max(16, Math.floor(w * 0.036)) + 'px "Hind Siliguri", sans-serif';
-            ctx.fillText(item, x + 76, itemY + 6);
+            const truncated = item.length > 40 ? item.slice(0, 40) + '...' : item;
+            ctx.fillText(truncated, x + 76, itemY + 6);
           });
         } else {
           // Default Visual Card / Mock

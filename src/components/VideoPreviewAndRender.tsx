@@ -18,7 +18,10 @@ import {
 import {
   getAudioContext,
   playAudioUrl,
-  stopVoicePreview
+  stopVoicePreview,
+  speakBrowserSpeech,
+  generateProceduralBgMusic,
+  playSfx
 } from '../utils/audioSynthesis';
 import {
   Play,
@@ -32,6 +35,7 @@ import {
   Film,
   Layers,
   Volume2,
+  VolumeX,
   Rocket,
   Clock,
   X,
@@ -78,6 +82,7 @@ export const VideoPreviewAndRender: React.FC<VideoPreviewAndRenderProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0); // in seconds
   const [isRendering, setIsRendering] = useState(false);
   const [renderProgress, setRenderProgress] = useState(0);
@@ -92,13 +97,22 @@ export const VideoPreviewAndRender: React.FC<VideoPreviewAndRenderProps> = ({
   const [proRenderStatusText, setProRenderStatusText] = useState('');
   const [proRenderError, setProRenderError] = useState<string | null>(null);
   const [showPatMissingWarning, setShowPatMissingWarning] = useState(false);
-  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const activeJobIdRef = useRef<string | null>(null);
   const pollerRef = useRef<NodeJS.Timeout | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const currentPlayingSceneIdxRef = useRef<number>(-1);
+  const bgMusicNodeRef = useRef<{ source: AudioBufferSourceNode; gain: GainNode } | null>(null);
 
-  // Clean up timers on unmount
+  // Clean up timers and audio on unmount
   useEffect(() => {
     return () => {
+      stopVoicePreview();
+      if (bgMusicNodeRef.current) {
+        try {
+          bgMusicNodeRef.current.source.stop();
+        } catch (e) {}
+        bgMusicNodeRef.current = null;
+      }
       if (pollerRef.current) clearInterval(pollerRef.current);
       if (timerRef.current) clearInterval(timerRef.current);
     };
@@ -127,7 +141,7 @@ export const VideoPreviewAndRender: React.FC<VideoPreviewAndRenderProps> = ({
     stopVoicePreview();
 
     const jobId = Date.now().toString(36);
-    setActiveJobId(jobId);
+    activeJobIdRef.current = jobId;
     setIsProRendering(true);
     setProRenderStep('uploading');
     setProRenderStatusText('⏳ Uploading job...');
@@ -315,18 +329,85 @@ export const VideoPreviewAndRender: React.FC<VideoPreviewAndRenderProps> = ({
     return () => cancelAnimationFrame(animId);
   }, [isPlaying, totalDuration]);
 
+  // Synchronize audio voiceover, SFX, and background music playback continuously across scene boundaries
+  useEffect(() => {
+    if (!isPlaying || isMuted) {
+      stopVoicePreview();
+      currentPlayingSceneIdxRef.current = -1;
+      if (bgMusicNodeRef.current) {
+        try { bgMusicNodeRef.current.source.stop(); } catch (e) {}
+        bgMusicNodeRef.current = null;
+      }
+      return;
+    }
+
+    // Start background music loop if configured and not yet playing
+    if (!bgMusicNodeRef.current && voice.bgMusicTrack !== 'none') {
+      try {
+        const audioCtx = getAudioContext();
+        const bgBuffer = generateProceduralBgMusic(voice.bgMusicTrack, 60);
+        const source = audioCtx.createBufferSource();
+        source.buffer = bgBuffer;
+        source.loop = true;
+
+        const gain = audioCtx.createGain();
+        // Ducked level while speaking
+        gain.gain.value = voice.bgMusicVolume * 0.25;
+        source.connect(gain);
+        gain.connect(audioCtx.destination);
+        source.start();
+        bgMusicNodeRef.current = { source, gain };
+      } catch (e) {}
+    }
+
+    const { index, scene } = getSceneAtTime(currentTime);
+    if (index !== currentPlayingSceneIdxRef.current) {
+      const prevIdx = currentPlayingSceneIdxRef.current;
+      currentPlayingSceneIdxRef.current = index;
+      stopVoicePreview();
+
+      // Trigger SFX on scene transition
+      if (prevIdx !== -1) {
+        playSfx('whoosh', 0.2);
+      }
+      playSfx('pop', 0.15);
+
+      if (scene.audioBase64) {
+        playAudioUrl(scene.audioBase64).catch(() => {});
+      } else if (voice.engine === 'browser' && scene.voiceover_text) {
+        speakBrowserSpeech(scene.voiceover_text);
+      }
+    }
+  }, [isPlaying, isMuted, currentTime, getSceneAtTime, voice.engine, voice.bgMusicTrack, voice.bgMusicVolume]);
+
   // Toggle Play / Pause
   const handleTogglePlay = () => {
     if (isPlaying) {
       setIsPlaying(false);
       stopVoicePreview();
+      if (bgMusicNodeRef.current) {
+        try { bgMusicNodeRef.current.source.stop(); } catch (e) {}
+        bgMusicNodeRef.current = null;
+      }
+      currentPlayingSceneIdxRef.current = -1;
     } else {
       setIsPlaying(true);
-      // Play audio for current scene if available
-      const { scene } = getSceneAtTime(currentTime);
-      if (scene.audioBase64) {
-        playAudioUrl(scene.audioBase64).catch(() => {});
+      currentPlayingSceneIdxRef.current = -1; // Force immediate audio trigger for current scene
+    }
+  };
+
+  // Toggle Mute / Unmute
+  const handleToggleMute = () => {
+    if (!isMuted) {
+      stopVoicePreview();
+      if (bgMusicNodeRef.current) {
+        try { bgMusicNodeRef.current.source.stop(); } catch (e) {}
+        bgMusicNodeRef.current = null;
       }
+      setIsMuted(true);
+    } else {
+      setIsMuted(false);
+      currentPlayingSceneIdxRef.current = -1;
     }
   };
 
@@ -334,12 +415,19 @@ export const VideoPreviewAndRender: React.FC<VideoPreviewAndRenderProps> = ({
   const handleResetTimeline = () => {
     setIsPlaying(false);
     stopVoicePreview();
+    if (bgMusicNodeRef.current) {
+      try { bgMusicNodeRef.current.source.stop(); } catch (e) {}
+      bgMusicNodeRef.current = null;
+    }
+    currentPlayingSceneIdxRef.current = -1;
     setCurrentTime(0);
   };
 
   // Timeline scrubber change
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newTime = parseFloat(e.target.value);
+    stopVoicePreview();
+    currentPlayingSceneIdxRef.current = -1;
     setCurrentTime(newTime);
   };
 
@@ -355,6 +443,10 @@ export const VideoPreviewAndRender: React.FC<VideoPreviewAndRenderProps> = ({
     if (scenes.length === 0) return;
     setIsPlaying(false);
     stopVoicePreview();
+    if (bgMusicNodeRef.current) {
+      try { bgMusicNodeRef.current.source.stop(); } catch (e) {}
+      bgMusicNodeRef.current = null;
+    }
     setIsRendering(true);
     setRenderProgress(0);
     setRenderStepText('ভিডিও প্রস্তুতি শুরু হচ্ছে...');
@@ -392,6 +484,7 @@ export const VideoPreviewAndRender: React.FC<VideoPreviewAndRenderProps> = ({
 
   // Ready scenes count
   const readyScenes = scenes.filter(s => s.voiceStatus === 'ready').length;
+  const missingVoiceCount = scenes.length - readyScenes;
 
   return (
     <div className="space-y-6">
@@ -446,10 +539,24 @@ export const VideoPreviewAndRender: React.FC<VideoPreviewAndRenderProps> = ({
 
               <button
                 onClick={handleResetTimeline}
-                className="p-2.5 rounded-xl bg-[#0B0B12] hover:bg-white/5 text-[#A7A3C2] hover:text-white border border-[#8B5CF6]/25 transition-all text-xs"
+                className="p-2.5 rounded-xl bg-[#0B0B12] hover:bg-white/5 text-[#A7A3C2] hover:text-white border border-[#8B5CF6]/25 transition-all text-xs active:scale-95"
                 title="শুরুতে ফিরুন"
               >
                 <RotateCcw className="w-4 h-4" />
+              </button>
+
+              {/* Mute/Unmute Toggle Button */}
+              <button
+                onClick={handleToggleMute}
+                className={`p-2.5 rounded-xl border transition-all text-xs flex items-center gap-1.5 active:scale-95 ${
+                  isMuted
+                    ? 'bg-red-500/15 border-red-500/30 text-red-400'
+                    : 'bg-[#0B0B12] border-[#8B5CF6]/25 text-[#DDD6FE] hover:bg-white/5'
+                }`}
+                title={isMuted ? 'আনমিউট করুন' : 'মিউট করুন'}
+              >
+                {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                <span>{isMuted ? 'মিউট' : 'সাউন্ড অন'}</span>
               </button>
             </div>
 
@@ -475,7 +582,7 @@ export const VideoPreviewAndRender: React.FC<VideoPreviewAndRenderProps> = ({
 
           <div className="p-3 rounded-xl bg-[#0B0B12] border border-[#8B5CF6]/20">
             <span className="text-[#A7A3C2] block mb-1">ভিজ্যুয়াল টেমপ্লেট</span>
-            <span className="font-semibold text-white">{template === 'dark_neon' ? '🌃 Dark Neon' : '🌟 Light Pro'}</span>
+            <span className="font-semibold text-white">{template === 'dark_neon' ? '🌃 Dark Neon v2' : '🌟 Light Pro v2'}</span>
           </div>
 
           <div className="p-3 rounded-xl bg-[#0B0B12] border border-[#8B5CF6]/20">
@@ -487,9 +594,20 @@ export const VideoPreviewAndRender: React.FC<VideoPreviewAndRenderProps> = ({
 
           <div className="p-3 rounded-xl bg-[#0B0B12] border border-[#8B5CF6]/20">
             <span className="text-[#A7A3C2] block mb-1">ভয়েসওভার ও ব্যাকগ্রাউন্ড</span>
-            <span className="font-semibold text-white">{voice.voiceName} ({readyScenes}/{scenes.length} রেডি)</span>
+            <span className="font-semibold text-white">{voice.voiceName} ({readyScenes}/{scenes.length} প্রস্তুত)</span>
           </div>
         </div>
+
+        {/* Warning if any scenes lack voiceover */}
+        {missingVoiceCount > 0 && (
+          <div className="mt-4 p-3.5 rounded-xl bg-[#F59E0B]/15 border border-[#F59E0B]/35 flex items-start gap-2.5 text-xs text-[#FDE68A] animate-in fade-in">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-[#F59E0B] mt-0.5" />
+            <div>
+              <strong className="block text-white font-bold mb-0.5">⚠️ {missingVoiceCount}-টি scene-এ ভয়েস নেই</strong>
+              <span>এখন এক্সপোর্ট করলে এই দৃশ্যগুলোতে ভয়েসওভার থাকবে না। পূর্ববর্তী ধাপ ৫ (Voice)-এ গিয়ে "সব দৃশ্যের ভয়েস তৈরি করো" বাটনে ক্লিক করতে পারেন।</span>
+            </div>
+          </div>
+        )}
 
         {/* Facebook WebM upload guard notice */}
         <div className="mt-4 p-3 rounded-xl bg-[#8B5CF6]/10 border border-[#8B5CF6]/25 flex items-start gap-2.5 text-xs text-[#DDD6FE]">
@@ -503,9 +621,9 @@ export const VideoPreviewAndRender: React.FC<VideoPreviewAndRenderProps> = ({
         {/* Ready status indicator & Buttons */}
         <div className="mt-5 flex flex-col sm:flex-row items-center justify-between gap-4 pt-2 border-t border-[#8B5CF6]/15">
           <div className="flex items-center gap-2">
-            <div className={`w-2.5 h-2.5 rounded-full ${isProRendering ? 'bg-[#8B5CF6] animate-pulse' : 'bg-[#22C55E] animate-ping'}`} />
-            <span className="text-xs font-semibold text-[#22C55E]">
-              {isProRendering ? '☁️ Cloud Rendering Active' : '✓ Ready to Render'}
+            <div className={`w-2.5 h-2.5 rounded-full ${isProRendering ? 'bg-[#8B5CF6] animate-pulse' : (readyScenes === scenes.length ? 'bg-[#22C55E] animate-ping' : 'bg-[#F59E0B]')}`} />
+            <span className={`text-xs font-semibold ${readyScenes === scenes.length ? 'text-[#22C55E]' : 'text-[#F59E0B]'}`}>
+              {isProRendering ? '☁️ Cloud Rendering Active' : (readyScenes === scenes.length ? '✓ Ready to Render' : `⚠️ ${readyScenes}/${scenes.length} ভয়েস প্রস্তুত`)}
             </span>
           </div>
 
@@ -518,7 +636,7 @@ export const VideoPreviewAndRender: React.FC<VideoPreviewAndRenderProps> = ({
               title="ব্রাউজারে রেন্ডার (দ্রুত)"
             >
               <Sparkles className="w-4 h-4 text-[#8B5CF6]" />
-              <span>{isRendering ? 'লোকাল প্রসেসিং...' : 'Generate (লোকাল)'}</span>
+              <span>{isRendering ? 'লোকাল প্রসেসিং...' : 'Generate (লোকাল MP4)'}</span>
             </button>
 
             {/* Big Violet Pro Render Button */}

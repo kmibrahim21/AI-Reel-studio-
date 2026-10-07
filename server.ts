@@ -125,6 +125,19 @@ apiRouter.post('/health-check', async (req: Request, res: Response) => {
   }
 });
 
+// Diagnostic endpoint to check available models for current key
+apiRouter.get('/gemini/models', async (req: Request, res: Response) => {
+  const apiKey = getGeminiKey(req);
+  if (!apiKey) return res.status(401).json({ ok: false, error: 'No key' });
+  try {
+    const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`);
+    const data = await resp.json();
+    return res.json({ ok: true, models: data.models?.map((m: any) => m.name) });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // AI Script Generation endpoint
 apiRouter.post('/gemini/script', async (req: Request, res: Response) => {
   const apiKey = getGeminiKey(req);
@@ -173,9 +186,11 @@ IMAGE: <ভিজ্যুয়াল বর্ণনা>
   const prompt = `টপিক: ${topic.trim()}\n\nএই বিষয়ের উপর একটি ৪ থেকে ৬ দৃশ্যের আকর্ষণীয় বাংলা রিল স্ক্রিপ্ট তৈরি করো।`;
 
   const modelsToTry = [
+    'gemini-3.1-flash-lite',
     'gemini-3.8-flash',
-    'gemini-2.5-flash',
-    'gemini-3.1-flash-lite'
+    'gemini-3.7-flash',
+    'gemini-3.5-flash',
+    'gemini-flash-latest'
   ];
 
   try {
@@ -184,22 +199,33 @@ IMAGE: <ভিজ্যুয়াল বর্ণনা>
     let lastErr: any = null;
 
     for (const model of modelsToTry) {
-      try {
-        const response = await ai.models.generateContent({
-          model,
-          contents: prompt,
-          config: {
-            systemInstruction,
-            temperature: 0.7,
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          console.log(`[ReelStudio] Trying model for script: ${model} (attempt ${attempt + 1})`);
+          const response = await ai.models.generateContent({
+            model,
+            contents: prompt,
+            config: {
+              systemInstruction,
+              temperature: 0.7,
+            }
+          });
+          if (response.text) {
+            generatedText = response.text;
+            console.log(`[ReelStudio] Successfully generated script with: ${model}`);
+            break;
           }
-        });
-        if (response.text) {
-          generatedText = response.text;
-          break;
+        } catch (err: any) {
+          console.warn(`[ReelStudio] Error with model ${model} (attempt ${attempt + 1}):`, err.message || err);
+          lastErr = err;
+          if (err.status === 503 || (err.message && err.message.includes('503'))) {
+            await new Promise(r => setTimeout(r, 1200));
+          } else {
+            break;
+          }
         }
-      } catch (err: any) {
-        lastErr = err;
       }
+      if (generatedText) break;
     }
 
     if (generatedText) {
@@ -294,7 +320,11 @@ const handleGeminiTts = async (req: Request, res: Response) => {
                               .replace(/IMAGE:.*$/gim, '')
                               .trim();
 
+  // Model order as specified: gemini-2.5-flash-preview-tts -> gemini-2.5-pro-preview-tts -> gemini-2.5-flash
   const modelsOrder = [
+    'gemini-2.5-flash-preview-tts',
+    'gemini-2.5-pro-preview-tts',
+    'gemini-2.5-flash',
     'gemini-3.8-flash-lite-tts',
     'gemini-3.8-flash-tts'
   ];
@@ -343,8 +373,56 @@ const handleGeminiTts = async (req: Request, res: Response) => {
         break;
       }
     } catch (err: any) {
-      lastStatus = err.status || 500;
+      lastStatus = err.status || (err.message?.includes('fetch') ? 0 : 500);
       lastErrMsg = err.message || `Error calling ${model}`;
+    }
+  }
+
+  // Fallback: Direct REST call in case SDK method wrapper encounters endpoint differences
+  if (!successAudio) {
+    for (const model of ['gemini-2.5-flash-preview-tts', 'gemini-2.5-flash']) {
+      try {
+        const restUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        const restResp = await fetch(restUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey
+          },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: cleanSpokenText }] }],
+            generationConfig: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: {
+                    voiceName: selectedVoice
+                  }
+                }
+              }
+            }
+          })
+        });
+
+        if (restResp.ok) {
+          const restData = await restResp.json();
+          const cand = restData.candidates?.[0]?.content?.parts?.[0];
+          if (cand?.inlineData?.data) {
+            const convertedBase64 = convertPcmToWav(cand.inlineData.data, 24000);
+            successAudio = {
+              base64: convertedBase64,
+              mimeType: 'audio/wav',
+              model
+            };
+            break;
+          }
+        } else {
+          lastStatus = restResp.status;
+        }
+      } catch (restErr: any) {
+        lastStatus = 0; // Network / internet issue
+        lastErrMsg = restErr.message || 'REST fetch error';
+      }
     }
   }
 
@@ -358,11 +436,13 @@ const handleGeminiTts = async (req: Request, res: Response) => {
     });
   }
 
+  // Accurate Bengali reason mapping
   let banglaReason = 'অনুরোধে সমস্যা';
   if (lastStatus === 404) banglaReason = 'মডেল পাওয়া যায়নি';
   else if (lastStatus === 429) banglaReason = 'কোটা শেষ';
   else if (lastStatus === 401 || lastStatus === 403) banglaReason = 'key-র অনুমতি নেই';
   else if (lastStatus === 400) banglaReason = 'অনুরোধে সমস্যা';
+  else if (lastStatus === 0 || lastStatus >= 502) banglaReason = 'ইন্টারনেট সমস্যা';
 
   return res.status(lastStatus >= 400 && lastStatus < 600 ? lastStatus : 500).json({
     ok: false,

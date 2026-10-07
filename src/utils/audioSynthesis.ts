@@ -67,33 +67,6 @@ export function audioBufferToWav(buffer: AudioBuffer): ArrayBuffer {
   return out.buffer;
 }
 
-// Sound Design: Procedural cinematic transition whoosh sound effect (WebAudio)
-export function generateProceduralWhooshSound(durationSec: number = 0.5): AudioBuffer {
-  const ctx = getAudioContext();
-  const sampleRate = ctx.sampleRate;
-  const totalSamples = Math.floor(sampleRate * durationSec);
-  const buffer = ctx.createBuffer(2, totalSamples, sampleRate);
-  const left = buffer.getChannelData(0);
-  const right = buffer.getChannelData(1);
-
-  // Soft filtered noise sweep with gentle stereo pan
-  for (let i = 0; i < totalSamples; i++) {
-    const t = i / totalSamples;
-    // Bell curve amplitude envelope
-    const env = Math.sin(t * Math.PI) * Math.sin(t * Math.PI);
-    // Low-pass filtered noise simulation
-    const whiteNoise = (Math.random() * 2 - 1);
-    const softSweep = Math.sin(2 * Math.PI * (200 + t * 450) * (i / sampleRate));
-    const val = (whiteNoise * 0.4 + softSweep * 0.6) * env * 0.15;
-    
-    // Smooth stereo pan from left to right
-    left[i] = val * (1 - t * 0.4);
-    right[i] = val * (0.6 + t * 0.4);
-  }
-
-  return buffer;
-}
-
 // Decode base64 WAV or audio to AudioBuffer cleanly
 export async function decodeBase64AudioToBuffer(base64Data: string): Promise<AudioBuffer | null> {
   try {
@@ -111,7 +84,118 @@ export async function decodeBase64AudioToBuffer(base64Data: string): Promise<Aud
   }
 }
 
-// Synthesize procedural background music loops (Lo-Fi Chill, Corporate Ambient, Dramatic Cinematic, Upbeat Vlog)
+// Sound Design: Procedural cinematic transition whoosh sound effect (WebAudio)
+export function generateProceduralWhooshSound(durationSec: number = 0.4): AudioBuffer {
+  const ctx = getAudioContext();
+  const sampleRate = ctx.sampleRate;
+  const totalSamples = Math.floor(sampleRate * durationSec);
+  const buffer = ctx.createBuffer(2, totalSamples, sampleRate);
+  const left = buffer.getChannelData(0);
+  const right = buffer.getChannelData(1);
+
+  // Filtered stereo noise sweep
+  for (let i = 0; i < totalSamples; i++) {
+    const t = i / totalSamples;
+    const env = Math.sin(t * Math.PI) * Math.sin(t * Math.PI);
+    const whiteNoise = (Math.random() * 2 - 1);
+    const softSweep = Math.sin(2 * Math.PI * (160 + t * 500) * (i / sampleRate));
+    const val = (whiteNoise * 0.45 + softSweep * 0.55) * env * 0.2;
+    
+    left[i] = val * (1 - t * 0.35);
+    right[i] = val * (0.65 + t * 0.35);
+  }
+  return buffer;
+}
+
+// Procedural Card/Element Entrance soft pop sound (0.15s)
+export function generateProceduralPopSound(durationSec: number = 0.15): AudioBuffer {
+  const ctx = getAudioContext();
+  const sampleRate = ctx.sampleRate;
+  const totalSamples = Math.floor(sampleRate * durationSec);
+  const buffer = ctx.createBuffer(2, totalSamples, sampleRate);
+  const left = buffer.getChannelData(0);
+  const right = buffer.getChannelData(1);
+
+  for (let i = 0; i < totalSamples; i++) {
+    const t = i / totalSamples;
+    const env = Math.exp(-t * 22); // Fast exponential decay
+    const freq = 650 - t * 350; // Pitch slide downwards
+    const tone = Math.sin(2 * Math.PI * freq * (i / sampleRate));
+    const val = tone * env * 0.18;
+    left[i] = val;
+    right[i] = val;
+  }
+  return buffer;
+}
+
+// Procedural Count-Up tick sound (0.08s)
+export function generateProceduralTickSound(durationSec: number = 0.08): AudioBuffer {
+  const ctx = getAudioContext();
+  const sampleRate = ctx.sampleRate;
+  const totalSamples = Math.floor(sampleRate * durationSec);
+  const buffer = ctx.createBuffer(2, totalSamples, sampleRate);
+  const left = buffer.getChannelData(0);
+  const right = buffer.getChannelData(1);
+
+  for (let i = 0; i < totalSamples; i++) {
+    const t = i / totalSamples;
+    const env = Math.exp(-t * 40);
+    const click = Math.sin(2 * Math.PI * 1800 * (i / sampleRate));
+    const val = click * env * 0.12;
+    left[i] = val;
+    right[i] = val;
+  }
+  return buffer;
+}
+
+// Procedural CTA harmonic bell chime sound (0.6s)
+export function generateProceduralChimeSound(durationSec: number = 0.6): AudioBuffer {
+  const ctx = getAudioContext();
+  const sampleRate = ctx.sampleRate;
+  const totalSamples = Math.floor(sampleRate * durationSec);
+  const buffer = ctx.createBuffer(2, totalSamples, sampleRate);
+  const left = buffer.getChannelData(0);
+  const right = buffer.getChannelData(1);
+
+  // Multi-harmonic bell shimmer (C6, E6, G6, B6)
+  const freqs = [1046.5, 1318.5, 1567.98, 1975.53];
+  for (let i = 0; i < totalSamples; i++) {
+    const t = i / totalSamples;
+    const env = Math.exp(-t * 7);
+    let chimeSignal = 0;
+    freqs.forEach((f, idx) => {
+      chimeSignal += Math.sin(2 * Math.PI * f * (i / sampleRate)) * (1 / (idx + 1));
+    });
+    const val = chimeSignal * env * 0.14;
+    left[i] = val * (0.8 + 0.2 * Math.sin(t * 10));
+    right[i] = val * (0.8 + 0.2 * Math.cos(t * 10));
+  }
+  return buffer;
+}
+
+// Instant SFX playback in browser
+export function playSfx(type: 'whoosh' | 'pop' | 'tick' | 'chime', volume: number = 0.25): void {
+  try {
+    const ctx = getAudioContext();
+    let buf: AudioBuffer;
+    if (type === 'whoosh') buf = generateProceduralWhooshSound(0.4);
+    else if (type === 'pop') buf = generateProceduralPopSound(0.15);
+    else if (type === 'tick') buf = generateProceduralTickSound(0.08);
+    else buf = generateProceduralChimeSound(0.6);
+
+    const source = ctx.createBufferSource();
+    source.buffer = buf;
+    const gain = ctx.createGain();
+    gain.gain.value = volume;
+    source.connect(gain);
+    gain.connect(ctx.destination);
+    source.start();
+  } catch (e) {
+    // AudioContext autoplay fallback
+  }
+}
+
+// Synthesize procedural background music loops (Calm Corporate, Upbeat, Soft Piano)
 export function generateProceduralBgMusic(trackName: string, durationSec: number = 30): AudioBuffer {
   const ctx = getAudioContext();
   const sampleRate = ctx.sampleRate;
@@ -122,23 +206,45 @@ export function generateProceduralBgMusic(trackName: string, durationSec: number
 
   let bpm = 90;
   let baseFreq = 130.81; // C3
-  if (trackName === 'lofi') { bpm = 75; baseFreq = 110; }
-  else if (trackName === 'corporate') { bpm = 110; baseFreq = 146.83; }
-  else if (trackName === 'dramatic') { bpm = 65; baseFreq = 98; }
-  else if (trackName === 'upbeat') { bpm = 120; baseFreq = 164.81; }
+  let chordProgression: number[][];
+
+  if (trackName === 'upbeat') {
+    bpm = 118;
+    baseFreq = 146.83; // D3
+    chordProgression = [
+      [baseFreq, baseFreq * 1.25, baseFreq * 1.5],         // I
+      [baseFreq * 1.5, baseFreq * 1.87, baseFreq * 2.25],   // V
+      [baseFreq * 1.12, baseFreq * 1.4, baseFreq * 1.68],   // vi
+      [baseFreq * 1.33, baseFreq * 1.66, baseFreq * 2]      // IV
+    ];
+  } else if (trackName === 'piano' || trackName === 'lofi') {
+    // Soft Piano
+    bpm = 72;
+    baseFreq = 110.0; // A2
+    chordProgression = [
+      [baseFreq, baseFreq * 1.2, baseFreq * 1.5],          // Am
+      [baseFreq * 1.33, baseFreq * 1.66, baseFreq * 2],    // Dm
+      [baseFreq * 1.5, baseFreq * 1.87, baseFreq * 2.25],  // Em
+      [baseFreq * 1.25, baseFreq * 1.5, baseFreq * 1.87]   // F
+    ];
+  } else {
+    // Calm Corporate (Default)
+    bpm = 95;
+    baseFreq = 130.81; // C3
+    chordProgression = [
+      [baseFreq, baseFreq * 1.25, baseFreq * 1.5],
+      [baseFreq * 1.33, baseFreq * 1.66, baseFreq * 2],
+      [baseFreq * 1.5, baseFreq * 1.87, baseFreq * 2.25],
+      [baseFreq * 1.12, baseFreq * 1.4, baseFreq * 1.68]
+    ];
+  }
 
   const beatSec = 60 / bpm;
-  const chords = [
-    [baseFreq, baseFreq * 1.25, baseFreq * 1.5], // I
-    [baseFreq * 1.33, baseFreq * 1.66, baseFreq * 2], // IV
-    [baseFreq * 1.5, baseFreq * 1.87, baseFreq * 2.25], // V
-    [baseFreq * 1.12, baseFreq * 1.4, baseFreq * 1.68]  // vi
-  ];
 
   for (let i = 0; i < totalSamples; i++) {
     const t = i / sampleRate;
-    const chordIndex = Math.floor(t / (beatSec * 4)) % chords.length;
-    const currentChord = chords[chordIndex];
+    const chordIndex = Math.floor(t / (beatSec * 4)) % chordProgression.length;
+    const currentChord = chordProgression[chordIndex];
 
     let chordSignal = 0;
     for (const freq of currentChord) {
@@ -147,9 +253,10 @@ export function generateProceduralBgMusic(trackName: string, durationSec: number
 
     // Soft beat pulse
     const beatPhase = (t % beatSec) / beatSec;
-    const kick = Math.exp(-beatPhase * 15) * Math.sin(2 * Math.PI * 55 * beatPhase) * 0.12;
+    const kick = Math.exp(-beatPhase * 16) * Math.sin(2 * Math.PI * 55 * beatPhase) * 0.1;
+    const snare = beatPhase > 0.48 && beatPhase < 0.54 ? (Math.random() * 2 - 1) * 0.03 : 0;
 
-    const val = (chordSignal + kick) * 0.4;
+    const val = (chordSignal + kick + snare) * 0.35;
     left[i] = val;
     right[i] = val * 0.95;
   }
