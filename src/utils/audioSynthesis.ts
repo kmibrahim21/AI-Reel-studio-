@@ -217,7 +217,7 @@ export async function requestGeminiTTS(
   return {
     audioUrl,
     duration,
-    model: data.model || 'gemini-2.5-flash-preview-tts',
+    model: data.model || 'gemini-3.8-flash-lite-tts',
     voiceName: data.voiceName || voiceName
   };
 }

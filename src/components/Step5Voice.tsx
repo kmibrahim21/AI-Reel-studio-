@@ -218,16 +218,6 @@ export const Step5Voice: React.FC<Step5VoiceProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Inline Gemini Key Box when Gemini engine is active */}
-      {voice.engine === 'gemini' && (
-        <InlineGeminiKeyBox
-          currentKey={customGeminiKey}
-          onKeySaved={(newKey) => {
-            if (onGeminiKeyUpdate) onGeminiKeyUpdate(newKey);
-          }}
-        />
-      )}
-
       {/* 1. Voice Engine Selection */}
       <div className="p-4 sm:p-6 rounded-[18px] bg-[#14141D] border border-[rgba(139,92,246,0.18)]">
         <h3 className="text-base font-semibold text-[#F4F2FF] mb-1">ভয়েস ইঞ্জিন (TTS Engine)</h3>
@@ -240,7 +230,7 @@ export const Step5Voice: React.FC<Step5VoiceProps> = ({
             {
               id: 'gemini',
               title: '🎙️ Gemini TTS',
-              desc: 'gemini-2.5-flash-preview-tts (উন্নত বাংলা বাচনভঙ্গি)',
+              desc: 'gemini-3.8-flash-lite-tts (উন্নত বাংলা বাচনভঙ্গি)',
               badge: 'প্রস্তাবিত'
             },
             {

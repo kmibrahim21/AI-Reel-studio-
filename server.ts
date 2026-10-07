@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { GoogleGenAI } from '@google/genai';
 
 dotenv.config();
 
@@ -19,7 +20,30 @@ function getGeminiKey(req: Request): string {
   return (customKey && customKey.trim().length > 0) ? customKey.trim() : (process.env.GEMINI_API_KEY || '').trim();
 }
 
-// Health check endpoint for Gemini API key
+function getGenAIClient(apiKey: string): GoogleGenAI {
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+    },
+  });
+}
+
+// Health check endpoint for Gemini API key (GET)
+app.get('/api/health-check', (_req: Request, res: Response) => {
+  const hasKey = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 0);
+  return res.json({
+    ok: hasKey,
+    hasServerKey: hasKey,
+    statusCategory: hasKey ? 'valid' : 'missing_key',
+    banglaReason: hasKey ? '✓ যুক্ত' : '⚠️ কোনো কী দেওয়া হয়নি',
+    message: hasKey ? 'Server GEMINI_API_KEY is configured' : 'Server GEMINI_API_KEY is not set'
+  });
+});
+
+// Health check endpoint for Gemini API key (POST)
 app.post('/api/health-check', async (req: Request, res: Response) => {
   const apiKey = getGeminiKey(req);
   if (!apiKey) {
@@ -28,58 +52,17 @@ app.post('/api/health-check', async (req: Request, res: Response) => {
       code: 400,
       statusCategory: 'invalid_key',
       banglaReason: '❌ কোনো API কী দেওয়া হয়নি',
-      detailedHelp: '⚠️ এই key-টি কাজ করছে না। aistudio.google.com → Get API key → Create API key থেকে নতুন key নিয়ে আবার চেষ্টা করো।',
+      detailedHelp: '⚠️ কোনো Gemini API key পাওয়া যায়নি।',
       message: 'No API key provided or found in environment'
     });
   }
 
   try {
-    // Real API validation call via Google models endpoint with x-goog-api-key header
-    const testUrl = 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1';
-    let resp = await fetch(testUrl, {
-      method: 'GET',
-      headers: {
-        'x-goog-api-key': apiKey,
-      }
+    const ai = getGenAIClient(apiKey);
+    await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: 'hi',
     });
-
-    // If header returns 400 or fails, try with key query param as fallback
-    if (!resp.ok && (resp.status === 400 || resp.status === 401)) {
-      const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models?pageSize=1&key=${encodeURIComponent(apiKey)}`;
-      const queryResp = await fetch(fallbackUrl, { method: 'GET' }).catch(() => null);
-      if (queryResp && queryResp.ok) {
-        resp = queryResp;
-      }
-    }
-
-    if (!resp.ok) {
-      const errBody = await resp.json().catch(() => ({}));
-      const status = resp.status;
-      let statusCategory = 'invalid_key';
-      let banglaReason = '❌ অবৈধ key';
-
-      if (status === 429) {
-        statusCategory = 'quota_exceeded';
-        banglaReason = '⚠️ কোটা শেষ — কিছুক্ষণ পর চেষ্টা করো';
-      } else if (status === 403 || status === 401 || status === 400) {
-        statusCategory = 'invalid_key';
-        banglaReason = '❌ অবৈধ key';
-      } else {
-        statusCategory = 'error';
-        banglaReason = '⚠️ অনুরোধে সমস্যা';
-      }
-
-      const detailedHelp = '⚠️ এই key-টি কাজ করছে না। aistudio.google.com → Get API key → Create API key থেকে নতুন key নিয়ে আবার চেষ্টা করো।';
-
-      return res.status(status).json({
-        ok: false,
-        code: status,
-        statusCategory,
-        banglaReason,
-        detailedHelp,
-        error: errBody?.error?.message || `HTTP ${status}`
-      });
-    }
 
     return res.json({
       ok: true,
@@ -89,13 +72,15 @@ app.post('/api/health-check', async (req: Request, res: Response) => {
       message: '✓ যুক্ত (সক্রিয় ও কার্যকরী)'
     });
   } catch (err: any) {
-    return res.status(500).json({
+    const status = err.status || 500;
+    const isQuota = status === 429 || (err.message && err.message.includes('429'));
+    return res.status(status >= 400 && status < 600 ? status : 500).json({
       ok: false,
-      code: 500,
-      statusCategory: 'error',
-      banglaReason: '⚠️ নেটওয়ার্ক সমস্যা — আবার চেষ্টা করো',
-      detailedHelp: '⚠️ নেটওয়ার্ক সমস্যা — আবার চেষ্টা করো',
-      error: err.message
+      code: status,
+      statusCategory: isQuota ? 'quota_exceeded' : 'invalid_key',
+      banglaReason: isQuota ? '⚠️ কোটা শেষ — কিছুক্ষণ পর চেষ্টা করো' : '❌ অবৈধ key',
+      detailedHelp: isQuota ? '⚠️ কোটা শেষ — কিছুক্ষণ পর চেষ্টা করো' : '⚠️ এই key-টি কাজ করছে না।',
+      error: err.message || `Error ${status}`
     });
   }
 });
@@ -109,7 +94,7 @@ app.post('/api/gemini/script', async (req: Request, res: Response) => {
     return res.status(401).json({
       ok: false,
       code: 401,
-      banglaReason: '⚠️ AI key কাজ করছে না — নিচে নিজের স্ক্রিপ্ট paste করো',
+      banglaReason: '⚠️ AI key পাওয়া যায়নি',
       message: 'Missing or invalid Gemini API key'
     });
   }
@@ -147,70 +132,40 @@ IMAGE: <ভিজ্যুয়াল বর্ণনা>
 
   const prompt = `টপিক: ${topic.trim()}\n\nএই বিষয়ের উপর একটি ৪ থেকে ৬ দৃশ্যের আকর্ষণীয় বাংলা রিল স্ক্রিপ্ট তৈরি করো।`;
 
-  const modelsToTry = [
-    'gemini-2.5-flash',
-    'gemini-3.8-flash',
-    'gemini-2.0-flash',
-    'gemini-1.5-flash'
-  ];
-
-  let lastError: any = null;
-  let generatedText = '';
-
-  for (const model of modelsToTry) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          systemInstruction: { parts: [{ text: systemInstruction }] },
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 2048,
-          }
-        })
-      });
-
-      if (resp.ok) {
-        const data = await resp.json();
-        const candText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (candText) {
-          generatedText = candText;
-          break;
-        }
-      } else {
-        const errJson = await resp.json().catch(() => ({}));
-        lastError = { status: resp.status, body: errJson };
+  try {
+    const ai = getGenAIClient(apiKey);
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: prompt,
+      config: {
+        systemInstruction,
+        temperature: 0.7,
       }
-    } catch (err: any) {
-      lastError = { status: 500, message: err.message };
-    }
-  }
+    });
 
-  if (generatedText) {
-    return res.json({
-      ok: true,
-      script: generatedText
+    const generatedText = response.text;
+    if (generatedText) {
+      return res.json({
+        ok: true,
+        script: generatedText
+      });
+    }
+
+    throw new Error('No script generated');
+  } catch (err: any) {
+    const status = err.status || 500;
+    let banglaReason = '⚠️ AI স্ক্রিপ্ট তৈরিতে সমস্যা হয়েছে';
+    if (status === 404) banglaReason = '⚠️ মডেল পাওয়া যায়নি';
+    else if (status === 429) banglaReason = '⚠️ AI কোটা শেষ — কিছুক্ষণ পর চেষ্টা করো';
+    else if (status === 403 || status === 401) banglaReason = '⚠️ key-র অনুমতি নেই';
+
+    return res.status(status >= 400 && status < 600 ? status : 500).json({
+      ok: false,
+      code: status,
+      banglaReason,
+      error: err.message || 'Failed to generate script'
     });
   }
-
-  const status = lastError?.status || 500;
-  let banglaReason = '⚠️ AI key কাজ করছে না — নিচে নিজের স্ক্রিপ্ট paste করো';
-  if (status === 404) banglaReason = '⚠️ মডেল পাওয়া যায়নি — নিচে নিজের স্ক্রিপ্ট paste করো';
-  else if (status === 429) banglaReason = '⚠️ AI কোটা শেষ — নিচে নিজের স্ক্রিপ্ট paste করো';
-  else if (status === 403) banglaReason = '⚠️ key-র অনুমতি নেই — নিচে নিজের স্ক্রিপ্ট paste করো';
-
-  return res.status(status >= 400 && status < 600 ? status : 500).json({
-    ok: false,
-    code: status,
-    banglaReason,
-    error: lastError?.body?.error?.message || lastError?.message || 'Failed to generate script'
-  });
 });
 
 // Helper to convert raw 16-bit Mono 24kHz PCM to valid WAV with 44-byte RIFF header
@@ -283,12 +238,8 @@ app.post('/api/tts/gemini', async (req: Request, res: Response) => {
                               .trim();
 
   const modelsOrder = [
-    'gemini-2.5-flash-preview-tts',
-    'gemini-2.5-pro-preview-tts',
-    'gemini-3.8-flash-tts',
     'gemini-3.8-flash-lite-tts',
-    'gemini-3.1-flash-tts-preview',
-    'gemini-2.5-flash'
+    'gemini-3.8-flash-tts'
   ];
 
   // Map requested voice or default to Kore
@@ -299,53 +250,44 @@ app.post('/api/tts/gemini', async (req: Request, res: Response) => {
   let lastStatus = 500;
   let lastErrMsg = '';
 
+  const ai = getGenAIClient(apiKey);
+
   for (const model of modelsOrder) {
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
-        body: JSON.stringify({
-          contents: [{
+      const response = await ai.models.generateContent({
+        model,
+        contents: [
+          {
+            role: 'user',
             parts: [{ text: cleanSpokenText }]
-          }],
-          generationConfig: {
-            responseModalities: ['AUDIO'],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: {
-                  voiceName: selectedVoice
-                }
+          }
+        ],
+        config: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: {
+                voiceName: selectedVoice
               }
             }
           }
-        })
+        }
       });
 
-      if (resp.ok) {
-        const json = await resp.json();
-        const cand = json.candidates?.[0]?.content?.parts?.[0];
-        if (cand?.inlineData?.data) {
-          // Convert raw PCM to standard WAV with RIFF header if needed
-          const convertedBase64 = convertPcmToWav(cand.inlineData.data, 24000);
-          successAudio = {
-            base64: convertedBase64,
-            mimeType: 'audio/wav',
-            model
-          };
-          break;
-        }
-      } else {
-        lastStatus = resp.status;
-        const errJson = await resp.json().catch(() => ({}));
-        lastErrMsg = errJson?.error?.message || `HTTP ${resp.status}`;
+      const cand = response.candidates?.[0]?.content?.parts?.[0];
+      if (cand?.inlineData?.data) {
+        // Convert raw PCM to standard WAV with RIFF header if needed
+        const convertedBase64 = convertPcmToWav(cand.inlineData.data, 24000);
+        successAudio = {
+          base64: convertedBase64,
+          mimeType: 'audio/wav',
+          model
+        };
+        break;
       }
     } catch (err: any) {
-      lastStatus = 500;
-      lastErrMsg = err.message;
+      lastStatus = err.status || 500;
+      lastErrMsg = err.message || `Error calling ${model}`;
     }
   }
 

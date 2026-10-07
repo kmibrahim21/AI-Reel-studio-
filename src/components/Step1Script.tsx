@@ -48,20 +48,8 @@ export const Step1Script: React.FC<Step1ScriptProps> = ({
     onScenesChange(parsed.scenes);
   };
 
-  // Honest AI Script Generation
+  // AI Script Generation
   const handleGenerateAiScript = async () => {
-    if (!customApiKey || !customApiKey.trim()) {
-      // Missing Key rule: Show amber warning and show inline key box
-      setAiErrorWarning('⚠️ AI key কাজ করছে না — নিচে নিজের স্ক্রিপ্ট paste করো');
-      setShowKeyInputExplicit(true);
-      setTimeout(() => {
-        if (textareaRef.current) {
-          textareaRef.current.focus();
-        }
-      }, 100);
-      return;
-    }
-
     if (!aiTopic.trim()) {
       setAiErrorWarning('অনুগ্রহ করে স্ক্রিপ্ট তৈরির জন্য একটি বিষয় (টপিক) লিখুন।');
       return;
@@ -75,27 +63,19 @@ export const Step1Script: React.FC<Step1ScriptProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-gemini-key': customApiKey.trim()
+          ...(customApiKey ? { 'x-gemini-key': customApiKey.trim() } : {})
         },
         body: JSON.stringify({
           topic: aiTopic.trim(),
-          customApiKey: customApiKey.trim()
+          customApiKey: customApiKey?.trim() || ''
         })
       });
 
       const data = await resp.json();
 
       if (!resp.ok || !data.ok) {
-        // Honest AI Rule: Show amber warning and focus textarea
-        const warning = data.banglaReason || '⚠️ AI key কাজ করছে না — নিচে নিজের স্ক্রিপ্ট paste করো';
+        const warning = data.banglaReason || data.error || '⚠️ AI স্ক্রিপ্ট তৈরিতে সমস্যা হয়েছে';
         setAiErrorWarning(warning);
-        setShowKeyInputExplicit(true);
-        setTimeout(() => {
-          if (textareaRef.current) {
-            textareaRef.current.focus();
-            textareaRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
-        }, 100);
         return;
       }
 
@@ -106,15 +86,8 @@ export const Step1Script: React.FC<Step1ScriptProps> = ({
         setAiTopic('');
         setAiErrorWarning(null);
       }
-    } catch (err: any) {
-      setAiErrorWarning('⚠️ AI key কাজ করছে না — নিচে নিজের স্ক্রিপ্ট paste করো');
-      setShowKeyInputExplicit(true);
-      setTimeout(() => {
-        if (textareaRef.current) {
-          textareaRef.current.focus();
-          textareaRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-      }, 100);
+    } catch {
+      setAiErrorWarning('⚠️ নেটওয়ার্ক সমস্যা — অনুগ্রহ করে আবার চেষ্টা করুন');
     } finally {
       setIsGeneratingAi(false);
     }
@@ -211,14 +184,14 @@ export const Step1Script: React.FC<Step1ScriptProps> = ({
           </button>
         </div>
 
-        {/* HONEST AI RULE: Amber Warning Banner on Missing / Invalid Key */}
+        {/* Warning Banner on Generation Error */}
         {aiErrorWarning && (
           <div className="mt-3 p-3 rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 flex items-start gap-2.5 text-[#F59E0B] animate-in fade-in duration-200">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
             <div className="text-xs">
               <span className="font-semibold block">{aiErrorWarning}</span>
               <span className="text-[#F59E0B]/80 block mt-0.5">
-                উপরে থাকা "🔑 Gemini API key" বক্সে আপনার ভ্যালিড API কী দিন অথবা নিচে নিজের স্ক্রিপ্ট লিখুন।
+                টপিক পরিবর্তন করে আবার চেষ্টা করতে পারেন অথবা সরাসরি নিচে নিজের স্ক্রিপ্ট পেস্ট করুন।
               </span>
             </div>
           </div>

@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AppSettings, VoiceName, TemplateType, TTSEngine } from '../types';
-import { Settings, Eye, EyeOff, CheckCircle2, AlertTriangle, XCircle, Key, Save, RefreshCw, Github, Rocket, ExternalLink } from 'lucide-react';
+import { Settings, Eye, EyeOff, CheckCircle2, AlertTriangle, XCircle, Key, Save, RefreshCw, Rocket, ExternalLink, Sparkles } from 'lucide-react';
 import {
-  setStoredGeminiKey,
-  getStoredGeminiKey,
   getStoredGitHubPat,
   setStoredGitHubPat,
   getStoredGitHubRepo,
@@ -19,7 +17,6 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   settings,
   onSaveSettings
 }) => {
-  const [geminiKey, setGeminiKey] = useState(() => getStoredGeminiKey() || settings.geminiApiKey || '');
   const [elevenLabsKey, setElevenLabsKey] = useState(settings.elevenLabsApiKey || '');
   const [defaultVoice, setDefaultVoice] = useState<VoiceName>(settings.defaultVoice || 'Kore');
   const [defaultTemplate, setDefaultTemplate] = useState<TemplateType>(settings.defaultTemplate || 'dark_neon');
@@ -37,7 +34,6 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   } | null>(null);
   const [githubSaveNotice, setGithubSaveNotice] = useState(false);
 
-  const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [showElevenKey, setShowElevenKey] = useState(false);
 
   // Health-check state
@@ -48,39 +44,23 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
     detail?: string;
   } | null>(null);
 
-  const [geminiSaveNotice, setGeminiSaveNotice] = useState(false);
   const [isSavedNotice, setIsSavedNotice] = useState(false);
 
-  // Initial health check if key is present
+  // Initial health check
   useEffect(() => {
-    if (geminiKey.trim()) {
-      handleCheckGeminiHealth(geminiKey.trim());
-    }
+    handleCheckGeminiHealth();
   }, []);
 
-  // Check health of Gemini key
-  const handleCheckGeminiHealth = async (keyToCheck?: string) => {
-    const key = (keyToCheck !== undefined ? keyToCheck : geminiKey).trim();
-    if (!key) {
-      setGeminiStatus({
-        category: 'invalid',
-        label: '❌ অবৈধ key',
-        detail: 'কোনো API কী (Key) পাওয়া যায়নি'
-      });
-      return;
-    }
-
+  // Check health of server Gemini key
+  const handleCheckGeminiHealth = async () => {
     setIsCheckingGemini(true);
     setGeminiStatus(null);
 
     try {
       const resp = await fetch('/api/health-check', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-gemini-key': key
-        },
-        body: JSON.stringify({ customApiKey: key })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
       });
 
       const data = await resp.json();
@@ -88,45 +68,30 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       if (resp.ok && data.ok) {
         setGeminiStatus({
           category: 'valid',
-          label: '✓ যুক্ত',
-          detail: 'API Key সক্রিয় ও কার্যকরী!'
+          label: '✓ সক্রিয় ও প্রস্তুত',
+          detail: 'Google AI Studio সার্ভার-সাইড Gemini API সফলভাবে সংযুক্ত রয়েছে।'
         });
       } else if (data.statusCategory === 'quota_exceeded' || data.code === 429) {
         setGeminiStatus({
           category: 'quota',
           label: '⚠️ কোটা শেষ — কিছুক্ষণ পর চেষ্টা করো',
-          detail: 'আপনার Google AI Studio কোটার সীমা শেষ হয়েছে। অনুগ্রহ করে কিছুক্ষণ পর চেষ্টা করুন।'
+          detail: 'Google AI Studio কোটার সীমা শেষ হয়েছে। অনুগ্রহ করে কিছুক্ষণ পর চেষ্টা করুন।'
         });
       } else {
         setGeminiStatus({
           category: 'invalid',
-          label: data.banglaReason || '❌ অবৈধ key',
-          detail: data.detailedHelp || '⚠️ এই key-টি কাজ করছে না। aistudio.google.com → Get API key → Create API key থেকে নতুন key নিয়ে আবার চেষ্টা করো।'
+          label: data.banglaReason || '❌ সংযোগে সমস্যা',
+          detail: data.detailedHelp || 'Gemini API সার্ভার এনভায়রনমেন্ট পরীক্ষা করুন।'
         });
       }
-    } catch (err: any) {
+    } catch {
       setGeminiStatus({
         category: 'error',
         label: '⚠️ নেটওয়ার্ক সমস্যা — আবার চেষ্টা করো',
-        detail: 'ইন্টারনেট বা সার্ভার সংযোগে সমস্যা দেখা দিয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।'
+        detail: 'সার্ভার সংযোগে সমস্যা দেখা দিয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।'
       });
     } finally {
       setIsCheckingGemini(false);
-    }
-  };
-
-  // Quick save for Gemini Key only
-  const handleSaveGeminiKey = () => {
-    const trimmed = geminiKey.trim();
-    setStoredGeminiKey(trimmed);
-    onSaveSettings({
-      ...settings,
-      geminiApiKey: trimmed
-    });
-    setGeminiSaveNotice(true);
-    setTimeout(() => setGeminiSaveNotice(false), 2500);
-    if (trimmed) {
-      handleCheckGeminiHealth(trimmed);
     }
   };
 
@@ -211,14 +176,12 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
 
   // Save all settings
   const handleSaveAll = () => {
-    const trimmed = geminiKey.trim();
     const trimmedPat = githubPat.trim();
     const trimmedRepo = githubRepo.trim() || 'kmibrahim21/ReelStudio';
-    setStoredGeminiKey(trimmed);
     setStoredGitHubPat(trimmedPat);
     setStoredGitHubRepo(trimmedRepo);
     onSaveSettings({
-      geminiApiKey: trimmed,
+      ...settings,
       elevenLabsApiKey: elevenLabsKey.trim(),
       defaultVoice,
       defaultTemplate,
@@ -238,124 +201,61 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
           <span>⚙️ অ্যাপ্লিকেশন সেটিংস (Settings)</span>
         </h2>
         <p className="text-xs text-[#A7A3C2]">
-          আপনার API কি, ডিফল্ট ভয়েস এবং টেমপ্লেট কনফিগারেশন সংরক্ষণ করুন (কী ব্রাউজারের <code className="text-[#DDD6FE] font-mono">localStorage['reelstudio_gemini_key']</code>-এ সংরক্ষিত থাকে)
+          ডিফল্ট ভয়েস, টেমপ্লেট এবং ক্লাউড রেন্ডারিং কনফিগারেশন পরিচালনা করুন
         </p>
       </div>
 
-      {/* 1. PRIMARY: Gemini API Key Configuration (TOP SECTION) */}
+      {/* 1. PRIMARY: Gemini AI Status (Google AI Studio Cloud) */}
       <div className="p-5 sm:p-6 rounded-[18px] bg-gradient-to-b from-[#1C1833] to-[#14141D] border-2 border-[#8B5CF6]/40 shadow-xl shadow-[#8B5CF6]/10 glow-card">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-          <div className="flex items-center gap-2">
-            <div className="p-2 rounded-xl bg-[#8B5CF6]/20 text-[#C084FC]">
-              <Key className="w-5 h-5" />
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2.5 rounded-xl bg-[#8B5CF6]/20 text-[#C084FC]">
+              <Sparkles className="w-5 h-5" />
             </div>
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <span>🔑 Gemini API Key</span>
+                <span>✦ Gemini AI (Google AI Studio)</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#8B5CF6]/25 text-[#DDD6FE] border border-[#8B5CF6]/30">
-                  জরুরি / আবশ্যক
+                  সার্ভার ইন্টিগ্রেশন
                 </span>
               </h3>
               <p className="text-xs text-[#A7A3C2]">
-                Google AI Studio কী — AI স্ক্রিপ্ট তৈরি ও বাংলা ভয়েসওভার (TTS)-এর জন্য ব্যবহৃত হবে
+                Gemini 3.8 Flash ও Gemini 3.8 TTS — এআই স্ক্রিপ্ট ও বাংলা ভয়েসওভার চালিত
               </p>
             </div>
           </div>
 
-          {/* Quick status pill in header */}
-          {geminiStatus && (
-            <div className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border self-start sm:self-auto ${
-              geminiStatus.category === 'valid'
-                ? 'bg-[#22C55E]/15 text-[#22C55E] border-[#22C55E]/40'
-                : geminiStatus.category === 'quota'
-                ? 'bg-[#F59E0B]/15 text-[#F59E0B] border-[#F59E0B]/40'
-                : 'bg-[#EF4444]/15 text-[#EF4444] border-[#EF4444]/40'
-            }`}>
-              {geminiStatus.category === 'valid' && <CheckCircle2 className="w-3.5 h-3.5" />}
-              {geminiStatus.category === 'quota' && <AlertTriangle className="w-3.5 h-3.5" />}
-              {geminiStatus.category === 'invalid' && <XCircle className="w-3.5 h-3.5" />}
-              <span>{geminiStatus.label}</span>
-            </div>
-          )}
-        </div>
-
-        {/* Input + Action Buttons */}
-        <div className="space-y-3">
-          <div className="flex flex-col sm:flex-row gap-2.5">
-            <div className="relative flex-1">
-              <input
-                type={showGeminiKey ? 'text' : 'password'}
-                value={geminiKey}
-                onChange={(e) => {
-                  setGeminiKey(e.target.value);
-                  setGeminiStatus(null);
-                }}
-                onKeyDown={(e) => e.key === 'Enter' && handleSaveGeminiKey()}
-                placeholder="AIzaSy... অথবা AQ.... (Gemini API Key paste করুন)"
-                className="w-full pl-4 pr-11 py-2.5 bg-[#0B0B12] rounded-xl border border-[#8B5CF6]/40 text-xs sm:text-sm text-white placeholder-[#A7A3C2]/40 focus:outline-none focus:border-[#8B5CF6] focus:ring-1 focus:ring-[#8B5CF6] font-mono"
-              />
-              <button
-                type="button"
-                onClick={() => setShowGeminiKey(!showGeminiKey)}
-                className="absolute right-3.5 top-3 text-[#A7A3C2] hover:text-white"
-                title={showGeminiKey ? 'কী লুকান' : 'কী দেখুন'}
-              >
-                {showGeminiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleSaveGeminiKey}
-                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#8B5CF6] to-[#7C3AED] hover:from-[#7C3AED] hover:to-[#6D28D9] text-white font-semibold text-xs sm:text-sm transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 shrink-0"
-              >
-                <Save className="w-4 h-4" />
-                <span>Save (সংরক্ষণ)</span>
-              </button>
-
-              <button
-                onClick={() => handleCheckGeminiHealth()}
-                disabled={isCheckingGemini}
-                className="px-4 py-2.5 rounded-xl bg-[#0B0B12] hover:bg-white/5 text-[#DDD6FE] border border-[#8B5CF6]/40 text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-1.5 active:scale-95 disabled:opacity-50 shrink-0"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isCheckingGemini ? 'animate-spin' : ''}`} />
-                <span>✓ Check</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Detailed Status Notification */}
-          {geminiStatus && (
-            <div className={`p-3 rounded-xl text-xs flex items-start gap-2.5 border animate-in fade-in duration-200 ${
-              geminiStatus.category === 'valid'
-                ? 'bg-[#22C55E]/10 border-[#22C55E]/30 text-[#22C55E]'
-                : geminiStatus.category === 'quota'
-                ? 'bg-[#F59E0B]/10 border-[#F59E0B]/30 text-[#F59E0B]'
-                : 'bg-[#EF4444]/10 border-[#EF4444]/30 text-[#EF4444]'
-            }`}>
-              {geminiStatus.category === 'valid' && <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />}
-              {geminiStatus.category === 'quota' && <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />}
-              {geminiStatus.category === 'invalid' && <XCircle className="w-4 h-4 shrink-0 mt-0.5" />}
-              <div>
-                <strong className="block text-sm font-bold mb-0.5">{geminiStatus.label}</strong>
-                {geminiStatus.detail && (
-                  <span className="opacity-90 block">{geminiStatus.detail}</span>
-                )}
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            {geminiStatus && (
+              <div className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border ${
+                geminiStatus.category === 'valid'
+                  ? 'bg-[#22C55E]/15 text-[#22C55E] border-[#22C55E]/40'
+                  : geminiStatus.category === 'quota'
+                  ? 'bg-[#F59E0B]/15 text-[#F59E0B] border-[#F59E0B]/40'
+                  : 'bg-[#EF4444]/15 text-[#EF4444] border-[#EF4444]/40'
+              }`}>
+                {geminiStatus.category === 'valid' && <CheckCircle2 className="w-3.5 h-3.5" />}
+                {geminiStatus.category === 'quota' && <AlertTriangle className="w-3.5 h-3.5" />}
+                {geminiStatus.category === 'invalid' && <XCircle className="w-3.5 h-3.5" />}
+                <span>{geminiStatus.label}</span>
               </div>
-            </div>
-          )}
-
-          {geminiSaveNotice && (
-            <p className="text-xs text-[#22C55E] flex items-center gap-1 font-semibold animate-in fade-in">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Gemini API Key লোকাল স্টোরেজে সফলভাবে সংরক্ষিত হয়েছে!</span>
-            </p>
-          )}
-
-          <p className="text-[11px] text-[#A7A3C2] leading-relaxed">
-            কী পাওয়ার উপায়: <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-[#DDD6FE] underline hover:text-white">aistudio.google.com/app/apikey</a> থেকে ফ্রি Gemini API Key তৈরি করে এখানে পেস্ট করুন।
-          </p>
+            )}
+            <button
+              onClick={() => handleCheckGeminiHealth()}
+              disabled={isCheckingGemini}
+              className="px-3.5 py-1.5 rounded-xl bg-[#0B0B12] hover:bg-white/5 text-[#DDD6FE] border border-[#8B5CF6]/40 text-xs font-semibold transition-all flex items-center justify-center gap-1.5 active:scale-95 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isCheckingGemini ? 'animate-spin' : ''}`} />
+              <span>পুনরায় যাচাই</span>
+            </button>
+          </div>
         </div>
+
+        {geminiStatus && geminiStatus.detail && (
+          <div className="mt-2 text-xs text-[#A7A3C2] bg-[#0B0B12] p-3 rounded-xl border border-[#8B5CF6]/20">
+            {geminiStatus.detail}
+          </div>
+        )}
       </div>
 
       {/* 2. PRO RENDER CLOUD: GitHub Actions Integration */}
