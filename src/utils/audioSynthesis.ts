@@ -273,7 +273,123 @@ export function estimateBengaliSpeechDuration(text: string): number {
   return Math.min(25, parseFloat(estSeconds.toFixed(1)));
 }
 
-// Request Gemini TTS from server
+// Direct PCM Base64 to AudioBuffer converter (16-bit PCM, 24000 Hz, mono)
+export function pcmBase64ToAudioBuffer(b64: string): AudioBuffer {
+  const clean = b64.includes(',') ? b64.split(',')[1] : b64;
+  const bin = atob(clean);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  
+  const ctx = getAudioContext();
+
+  // If already WAV formatted (RIFF header)
+  if (bin.slice(0, 4) === 'RIFF' && bytes.length > 44) {
+    // 44-byte WAV header offset
+    const pcmData = bytes.subarray(44);
+    const samples = new Int16Array(pcmData.buffer, pcmData.byteOffset, Math.floor(pcmData.byteLength / 2));
+    const buf = ctx.createBuffer(1, samples.length, 24000);
+    const ch = buf.getChannelData(0);
+    for (let i = 0; i < samples.length; i++) ch[i] = samples[i] / 32768;
+    return buf;
+  }
+
+  const samples = new Int16Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 2));
+  const buf = ctx.createBuffer(1, samples.length, 24000);
+  const ch = buf.getChannelData(0);
+  for (let i = 0; i < samples.length; i++) ch[i] = samples[i] / 32768;
+  return buf;
+}
+
+// Convert AudioBuffer to Base64 WAV data URL
+export function audioBufferToDataUrl(buffer: AudioBuffer): string {
+  const wavArr = audioBufferToWav(buffer);
+  const bytes = new Uint8Array(wavArr);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return `data:audio/wav;base64,${btoa(binary)}`;
+}
+
+// Direct client-side Gemini TTS execution (Proven working request)
+export async function directGeminiTTS(
+  text: string,
+  apiKey: string,
+  voiceName: VoiceName = 'Kore'
+): Promise<{ audioUrl: string; duration: number; model: string; voiceName: string }> {
+  const cleanText = text.replace(/##\s*SCENE\s*\d+/gi, '')
+                        .replace(/NARRATION:/gi, '')
+                        .replace(/IMAGE:.*$/gim, '')
+                        .trim();
+
+  const models = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts'];
+  let lastErr: any = null;
+
+  for (const model of models) {
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+        {
+          method: 'POST',
+          headers: {
+            'x-goog-api-key': apiKey.trim(),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: cleanText }] }],
+            generationConfig: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName || 'Kore' } },
+              },
+            },
+          }),
+        }
+      );
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        const status = res.status;
+        let banglaReason = 'অনুরোধে সমস্যা';
+        if (status === 404) banglaReason = 'মডেল পাওয়া যায়নি';
+        else if (status === 429) banglaReason = 'কোটা শেষ';
+        else if (status === 401 || status === 403) banglaReason = 'key-র অনুমতি নেই';
+        else if (status === 400) banglaReason = 'অনুরোধে সমস্যা';
+
+        const customErr: any = new Error(`HTTP ${status}: ${errJson?.error?.message || res.statusText}`);
+        customErr.status = status;
+        customErr.banglaReason = banglaReason;
+        throw customErr;
+      }
+
+      const data = await res.json();
+      const b64 = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (!b64) throw new Error('API থেকে অডিও আসেনি');
+
+      const buffer = pcmBase64ToAudioBuffer(b64);
+      const audioUrl = audioBufferToDataUrl(buffer);
+
+      return {
+        audioUrl,
+        duration: buffer.duration || estimateBengaliSpeechDuration(cleanText),
+        model,
+        voiceName
+      };
+    } catch (err: any) {
+      lastErr = err;
+      if (err.status === 400 || err.status === 401 || err.status === 403) {
+        break; // Don't retry models on bad API key
+      }
+    }
+  }
+
+  if (!lastErr.banglaReason) {
+    lastErr.banglaReason = lastErr.message?.includes('fetch') ? 'ইন্টারনেট সমস্যা' : 'অনুরোধে সমস্যা';
+  }
+  throw lastErr;
+}
+
+// Request Gemini TTS (Server Proxy first, direct REST fallback)
 export async function requestGeminiTTS(
   text: string,
   voiceName: VoiceName,
@@ -286,61 +402,76 @@ export async function requestGeminiTTS(
 }> {
   const activeKey = (customApiKey || getStoredGeminiKey() || '').trim();
 
-  const res = await fetch('/api/tts/gemini', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(activeKey ? {
-        'x-gemini-key': activeKey,
-        'x-goog-api-key': activeKey,
-      } : {})
-    },
-    body: JSON.stringify({
-      text,
-      voiceName,
-      customApiKey: activeKey
-    })
-  });
-
-  const contentType = res.headers.get('content-type') || '';
-  if (!contentType.includes('application/json')) {
-    const err: any = new Error('সার্ভার থেকে অবৈধ রেসপন্স এসেছে');
-    err.status = res.status;
-    err.banglaReason = 'সার্ভার সংযোগ সমস্যা';
-    throw err;
-  }
-
-  const data = await res.json();
-  if (!res.ok || !data.ok) {
-    const err: any = new Error(data.banglaReason || 'TTS ত্রুটি');
-    err.status = data.code || res.status;
-    err.banglaReason = data.banglaReason || 'অনুরোধে সমস্যা';
-    throw err;
-  }
-
-  const audioUrl = `data:${data.mimeType || 'audio/wav'};base64,${data.audioBase64}`;
-  
-  // Calculate duration by decoding audio or estimate
-  let duration = estimateBengaliSpeechDuration(text);
   try {
-    const ctx = getAudioContext();
-    const binary = atob(data.audioBase64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const decoded = await ctx.decodeAudioData(bytes.buffer);
-    if (decoded && decoded.duration > 0) {
-      duration = decoded.duration;
+    const res = await fetch('/api/tts/gemini', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(activeKey ? {
+          'x-gemini-key': activeKey,
+          'x-goog-api-key': activeKey,
+        } : {})
+      },
+      body: JSON.stringify({
+        text,
+        voiceName,
+        customApiKey: activeKey
+      })
+    });
+
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const data = await res.json();
+      if (res.ok && data.ok && data.audioBase64) {
+        const audioUrl = `data:${data.mimeType || 'audio/wav'};base64,${data.audioBase64}`;
+        
+        let duration = estimateBengaliSpeechDuration(text);
+        try {
+          const ctx = getAudioContext();
+          const binary = atob(data.audioBase64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const decoded = await ctx.decodeAudioData(bytes.buffer);
+          if (decoded && decoded.duration > 0) {
+            duration = decoded.duration;
+          }
+        } catch {
+          // Duration fallback
+        }
+
+        return {
+          audioUrl,
+          duration,
+          model: data.model || 'gemini-2.5-flash-preview-tts',
+          voiceName: data.voiceName || voiceName
+        };
+      } else {
+        const err: any = new Error(data.banglaReason || data.error || 'TTS ত্রুটি');
+        err.status = data.code || res.status;
+        err.banglaReason = data.banglaReason || 'অনুরোধে সমস্যা';
+        
+        // If it's a specific auth/key error from server, fail immediately
+        if (err.status === 400 || err.status === 401 || err.status === 403) {
+          throw err;
+        }
+      }
     }
-  } catch (e) {
-    console.warn('Audio duration decode fallback', e);
+  } catch (serverErr: any) {
+    if (serverErr.status === 400 || serverErr.status === 401 || serverErr.status === 403) {
+      throw serverErr;
+    }
+    console.warn('[Gemini TTS] Server endpoint attempt failed, trying direct client fetch:', serverErr);
   }
 
-  return {
-    audioUrl,
-    duration,
-    model: data.model || 'gemini-3.8-flash-lite-tts',
-    voiceName: data.voiceName || voiceName
-  };
+  // Direct client-side fallback if server proxy failed
+  if (activeKey) {
+    return directGeminiTTS(text, activeKey, voiceName);
+  }
+
+  const err: any = new Error('API Key প্রয়োজন');
+  err.status = 401;
+  err.banglaReason = 'key-র অনুমতি নেই';
+  throw err;
 }
 
 // Request ElevenLabs TTS from server

@@ -162,7 +162,7 @@ export const Step5Voice: React.FC<Step5VoiceProps> = ({
       return;
     }
 
-    // Gemini TTS (models: gemini-2.5-flash-preview-tts -> gemini-2.5-pro-preview-tts -> gemini-2.5-flash)
+    // Gemini TTS (models: gemini-2.5-flash-preview-tts -> gemini-2.5-pro-preview-tts)
     try {
       const res = await requestGeminiTTS(s.voiceover_text, voice.voiceName, customGeminiKey);
       updated[idx] = {
@@ -230,7 +230,7 @@ export const Step5Voice: React.FC<Step5VoiceProps> = ({
             {
               id: 'gemini',
               title: '🎙️ Gemini TTS',
-              desc: 'gemini-3.8-flash-lite-tts (উন্নত বাংলা বাচনভঙ্গি)',
+              desc: 'gemini-2.5-flash-preview-tts (উন্নত বাংলা বাচনভঙ্গি)',
               badge: 'প্রস্তাবিত'
             },
             {
@@ -470,7 +470,7 @@ export const Step5Voice: React.FC<Step5VoiceProps> = ({
           <div>
             <h4 className="text-sm font-semibold text-[#F4F2FF]">প্রতিটি দৃশ্যের ভয়েসওভার স্ট্যাটাস</h4>
             <p className="text-xs text-[#A7A3C2]">
-              মডেল অগ্রাধিকার: gemini-2.5-flash-preview-tts → gemini-2.5-pro-preview-tts → gemini-2.5-flash
+              মডেল অগ্রাধিকার: gemini-2.5-flash-preview-tts → gemini-2.5-pro-preview-tts
             </p>
           </div>
 

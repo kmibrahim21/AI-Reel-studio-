@@ -297,6 +297,7 @@ function convertPcmToWav(base64Data: string, sampleRate = 24000): string {
 }
 
 // Gemini TTS Endpoint (Supports both /tts/gemini and /gemini/tts)
+// Gemini TTS Endpoint (Supports both /tts/gemini and /gemini/tts)
 const handleGeminiTts = async (req: Request, res: Response) => {
   const apiKey = getGeminiKey(req);
   const { text, voiceName = 'Kore' } = req.body;
@@ -319,19 +320,16 @@ const handleGeminiTts = async (req: Request, res: Response) => {
     });
   }
 
-  // Clean Bengali text only in user turn; English instructions in systemInstruction
+  // Clean Bengali text only in user turn
   const cleanSpokenText = text.replace(/##\s*SCENE\s*\d+/gi, '')
                               .replace(/NARRATION:/gi, '')
                               .replace(/IMAGE:.*$/gim, '')
                               .trim();
 
-  // Model order as specified: gemini-2.5-flash-preview-tts -> gemini-2.5-pro-preview-tts -> gemini-2.5-flash
+  // Model order: gemini-2.5-flash-preview-tts -> gemini-2.5-pro-preview-tts
   const modelsOrder = [
     'gemini-2.5-flash-preview-tts',
-    'gemini-2.5-pro-preview-tts',
-    'gemini-2.5-flash',
-    'gemini-3.8-flash-lite-tts',
-    'gemini-3.8-flash-tts'
+    'gemini-2.5-pro-preview-tts'
   ];
 
   // Map requested voice or default to Kore
@@ -342,61 +340,73 @@ const handleGeminiTts = async (req: Request, res: Response) => {
   let lastStatus = 500;
   let lastErrMsg = '';
 
-  const ai = getGenAIClient(apiKey);
+  const cleanKey = apiKey.trim();
 
+  // 1. Primary REST call with exact verified payload
   for (const model of modelsOrder) {
     try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: cleanSpokenText }]
-          }
-        ],
-        config: {
-          responseModalities: ['AUDIO'],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: {
-                voiceName: selectedVoice
+      const restUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+      const restResp = await fetch(restUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': cleanKey
+        },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: cleanSpokenText }] }],
+          generationConfig: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: {
+                  voiceName: selectedVoice
+                }
               }
             }
           }
-        }
+        })
       });
 
-      const cand = response.candidates?.[0]?.content?.parts?.[0];
-      if (cand?.inlineData?.data) {
-        // Convert raw PCM to standard WAV with RIFF header if needed
-        const convertedBase64 = convertPcmToWav(cand.inlineData.data, 24000);
-        successAudio = {
-          base64: convertedBase64,
-          mimeType: 'audio/wav',
-          model
-        };
-        break;
+      if (restResp.ok) {
+        const restData = await restResp.json();
+        const b64 = restData.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (b64) {
+          const convertedBase64 = convertPcmToWav(b64, 24000);
+          successAudio = {
+            base64: convertedBase64,
+            mimeType: 'audio/wav',
+            model
+          };
+          break;
+        }
+      } else {
+        lastStatus = restResp.status;
+        const errJson = await restResp.json().catch(() => ({}));
+        lastErrMsg = errJson?.error?.message || restResp.statusText;
+        console.warn(`[Gemini TTS] ${model} failed with HTTP ${lastStatus}: ${lastErrMsg}`);
       }
-    } catch (err: any) {
-      lastStatus = err.status || (err.message?.includes('fetch') ? 0 : 500);
-      lastErrMsg = err.message || `Error calling ${model}`;
+    } catch (restErr: any) {
+      lastStatus = 0; // Network / internet issue
+      lastErrMsg = restErr.message || 'REST fetch error';
+      console.warn(`[Gemini TTS] Network error on ${model}:`, restErr);
     }
   }
 
-  // Fallback: Direct REST call in case SDK method wrapper encounters endpoint differences
-  if (!successAudio) {
-    for (const model of ['gemini-2.5-flash-preview-tts', 'gemini-2.5-flash']) {
-      try {
-        const restUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-        const restResp = await fetch(restUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey
-          },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: cleanSpokenText }] }],
-            generationConfig: {
+  // 2. Secondary SDK call if REST encountered non-auth issue
+  if (!successAudio && lastStatus !== 400 && lastStatus !== 401 && lastStatus !== 403) {
+    try {
+      const ai = getGenAIClient(cleanKey);
+      for (const model of modelsOrder) {
+        try {
+          const response = await ai.models.generateContent({
+            model,
+            contents: [
+              {
+                role: 'user',
+                parts: [{ text: cleanSpokenText }]
+              }
+            ],
+            config: {
               responseModalities: ['AUDIO'],
               speechConfig: {
                 voiceConfig: {
@@ -406,12 +416,9 @@ const handleGeminiTts = async (req: Request, res: Response) => {
                 }
               }
             }
-          })
-        });
+          });
 
-        if (restResp.ok) {
-          const restData = await restResp.json();
-          const cand = restData.candidates?.[0]?.content?.parts?.[0];
+          const cand = response.candidates?.[0]?.content?.parts?.[0];
           if (cand?.inlineData?.data) {
             const convertedBase64 = convertPcmToWav(cand.inlineData.data, 24000);
             successAudio = {
@@ -421,13 +428,13 @@ const handleGeminiTts = async (req: Request, res: Response) => {
             };
             break;
           }
-        } else {
-          lastStatus = restResp.status;
+        } catch (sdkModelErr: any) {
+          lastStatus = sdkModelErr.status || 500;
+          lastErrMsg = sdkModelErr.message || `SDK error on ${model}`;
         }
-      } catch (restErr: any) {
-        lastStatus = 0; // Network / internet issue
-        lastErrMsg = restErr.message || 'REST fetch error';
       }
+    } catch (sdkInitErr: any) {
+      console.warn('[Gemini TTS] SDK fallback failed to initialize:', sdkInitErr);
     }
   }
 
@@ -448,6 +455,8 @@ const handleGeminiTts = async (req: Request, res: Response) => {
   else if (lastStatus === 401 || lastStatus === 403) banglaReason = 'key-র অনুমতি নেই';
   else if (lastStatus === 400) banglaReason = 'অনুরোধে সমস্যা';
   else if (lastStatus === 0 || lastStatus >= 502) banglaReason = 'ইন্টারনেট সমস্যা';
+
+  console.error(`[Gemini TTS Error] Code: ${lastStatus}, Reason: ${banglaReason}, Detail: ${lastErrMsg}`);
 
   return res.status(lastStatus >= 400 && lastStatus < 600 ? lastStatus : 500).json({
     ok: false,
