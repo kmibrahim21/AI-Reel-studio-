@@ -1,0 +1,6 @@
+{
+  "name": "ReelStudio — Bengali Script-to-Video Studio",
+  "description": "AI-চালিত বাংলা স্ক্রিপ্ট থেকে প্রফেশনাল রিল ও ভিডিও মেকার। 5-ধাপের উইজার্ড, অরিজিনাল স্ক্রিপ্ট প্ল্যানার, বাংলা ভয়েসওভার ও ক্যানভাস রেন্ডারিং।",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

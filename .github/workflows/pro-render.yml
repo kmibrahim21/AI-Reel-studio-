@@ -1,0 +1,65 @@
+name: Pro Render
+
+# ReelStudio "Pro Render" — deterministic cloud rendering.
+# Triggered from the ReelStudio web app via workflow_dispatch after it uploads jobs/<job_id>.json.
+# Output: renders/<job_id>.mp4 (+ <job_id>.status.json) pushed to the `renders` branch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: 'Render job ID (matches jobs/<job_id>.json)'
+        required: true
+
+run-name: "Pro Render ${{ inputs.job_id }}"
+concurrency:
+  group: pro-render-${{ inputs.job_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install playwright
+          python -m playwright install chromium --with-deps
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-noto-core fonts-lohit-beng-bengali || true
+          ffmpeg -version | head -1
+
+      - name: Render video
+        id: render
+        run: python render-engine/render.py --job "jobs/${{ inputs.job_id }}.json" --workdir /tmp/pro-render
+
+      - name: Publish MP4 to renders branch
+        if: always()
+        run: |
+          JOB="${{ inputs.job_id }}"
+          git config user.name "reel-pro-render"
+          git config user.email "reel-pro-render@users.noreply.github.com"
+          git checkout -B renders
+          mkdir -p renders
+          if [ -f "/tmp/pro-render/$JOB/output.mp4" ]; then
+            cp "/tmp/pro-render/$JOB/output.mp4" "renders/$JOB.mp4"
+            echo '{"status":"done"}' > "renders/$JOB.status.json"
+            echo "Published renders/$JOB.mp4"
+          else
+            echo "{\"status\":\"error\",\"message\":\"render step failed\"}" > "renders/$JOB.status.json"
+            echo "Render failed, wrote error status"
+          fi
+          git add renders/
+          git commit -m "pro-render $JOB" || echo "nothing to commit"
+          git push origin renders
