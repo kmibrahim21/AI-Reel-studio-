@@ -199,7 +199,7 @@ export function generateStandaloneScenesHtml(
   const subtitlesJson = JSON.stringify(subtitles);
   const motionJson = JSON.stringify(motion);
 
-  return `<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html lang="bn">
 <head>
   <meta charset="utf-8">
@@ -306,7 +306,7 @@ export function generateStandaloneScenesHtml(
         } else if (comp === 'feature_list') {
           const sourceText = scene.voiceover_text || scene.caption || '';
           const rawParts = sourceText
-            .split(/[,।;\n]+/)
+            .split(/[,।;\\n]+/)
             .map(function(s) { return s.trim(); })
             .filter(function(s) { return s.length > 2; });
 
@@ -314,7 +314,7 @@ export function generateStandaloneScenesHtml(
           if (rawParts.length >= 2) {
             items = rawParts.slice(0, 3).map(function(p, i) { return (i + 1) + '. ' + p; });
           } else {
-            const words = sourceText.split(/\s+/).filter(Boolean);
+            const words = sourceText.split(/\\s+/).filter(Boolean);
             if (words.length >= 6) {
               const partSize = Math.ceil(words.length / 3);
               const p1 = words.slice(0, partSize).join(' ');
@@ -514,6 +514,18 @@ export function generateStandaloneScenesHtml(
   </script>
 </body>
 </html>`;
+
+  // Safety net: Syntax-check <script> content before returning HTML
+  const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+  if (scriptMatch) {
+    try {
+      new Function(scriptMatch[1]);
+    } catch (e: any) {
+      throw new Error('Pro Render HTML-এ JavaScript syntax error: ' + e.message);
+    }
+  }
+
+  return html;
 }
 
 /**
@@ -525,6 +537,18 @@ export async function uploadProRenderJob(
   jobId: string,
   payload: ProRenderJobPayload
 ): Promise<void> {
+  // Safety net: Syntax-check scenesHtml script content before upload
+  if (payload.scenesHtml) {
+    const scriptMatch = payload.scenesHtml.match(/<script>([\s\S]*?)<\/script>/);
+    if (scriptMatch) {
+      try {
+        new Function(scriptMatch[1]);
+      } catch (e: any) {
+        throw new Error('Pro Render HTML-এ JavaScript syntax error: ' + e.message);
+      }
+    }
+  }
+
   const jsonContent = JSON.stringify(payload, null, 2);
   const base64Content = utf8ToBase64(jsonContent);
 
